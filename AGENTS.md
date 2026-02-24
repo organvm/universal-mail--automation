@@ -36,3 +36,24 @@ Global policy: /Users/4jp/AGENTS.md applies and cannot be overridden.
 - Keep OAuth client JSON, token data, and log files out of commits; rotate tokens if shared externally.
 - Gmail scope is `https://www.googleapis.com/auth/gmail.modify`; do not widen without review.
 - AppleScript tools operate on the local Mail app—close or pause them when running Gmail scripts to avoid conflicts.
+
+<!-- ORGANVM:AUTO:START -->
+## Agent Context (auto-generated — do not edit)
+
+This repo participates in the **ORGAN-III (Commerce)** swarm.
+
+### Active Subscriptions
+- *No active event subscriptions*
+
+### Production Responsibilities
+- *No production responsibilities*
+
+### External Dependencies
+- *No external dependencies*
+
+### Governance Constraints
+- Adhere to unidirectional flow: I→II→III
+- Never commit secrets or credentials
+
+*Last synced: 2026-02-24T12:41:28Z*
+<!-- ORGANVM:AUTO:END -->

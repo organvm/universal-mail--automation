@@ -12,6 +12,9 @@ project:
     package_manager: "pip"
     type: "automation-script"
 
+metadata:
+  promotion_status: CANDIDATE
+
 domain:
   problem_statement: >
     Exhaustively label and organize high-volume email inboxes based on 

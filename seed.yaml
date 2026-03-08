@@ -1,77 +1,17 @@
-version: 1
+# seed.yaml — Automation Contract for labores-profani-crux/universal-mail--automation
+# Schema: seed/v1.0
 
-project:
-  name: "mail_automation"
-  codename: "gmail-agent"
-  description: "Automated email organization and labeling using Gmail API."
-  owners:
-    - handle: "4444JPP"
-      role: "automation-engineer"
-  repo:
-    monorepo: false
-    package_manager: "pip"
-    type: "automation-script"
-
+schema_version: '1.0'
+organ: III
+organ_name: Commerce
+repo: universal-mail--automation
+org: labores-profani-crux
 metadata:
-  promotion_status: CANDIDATE
-
-domain:
-  problem_statement: >
-    Exhaustively label and organize high-volume email inboxes based on 
-    semantic categories and sender patterns.
-  personas:
-    - id: "user"
-      description: "The mailbox owner requiring organization."
-    - id: "sorter"
-      description: "The automated script applying rules."
-
-architecture:
-  style: "script-collection"
-  tech_stack:
-    language: "Python 3"
-    libs:
-      - "google-api-python-client"
-      - "google-auth"
-    local:
-      - "AppleScript (macOS Mail integration)"
-
-coding_standards:
-  language: "Python"
-  style:
-    formatter: "black"
-    linter: "pylint"
-
-growth_objectives:
-  roadmap_epics:
-    - id: "rules-v2"
-      title: "Semantic Rule Expansion"
-      description: "Refine regex patterns for higher accuracy."
-      modules: ["gmail_labeler.py"]
-    - id: "security-v1"
-      title: "Credential Safety"
-      description: "Ensure secrets are never logged or committed."
-      modules: [".gitignore"]
-
-automation_contract:
-  ai_access:
-    read_paths: ["*.py", "*.applescript", "*.md"]
-    write_paths: ["gmail_labeler.py", "AGENTS.md"]
-    disallowed_writes: ["credentials.json", "token.pickle", "*.log"]
-  task_labels:
-    auto_managed_labels: ["ai-refactor"]
-
+  implementation_status: ACTIVE
+  tier: standard
+  promotion_status: PUBLIC_PROCESS
+  last_validated: '2026-03-08'
 produces:
-  - type: community_signal
-    description: "Product milestones and releases generate community events"
-    consumers: [organvm-vi-koinonia/community-hub]
-  - type: distribution_signal
-    description: "Product updates trigger POSSE distribution via kerygma profile"
-    consumers: [organvm-vii-kerygma/social-automation]
-
-subscriptions:
-  - event: community.event_created
-    source: ORGAN-VI
-    action: Community event registered for this product
-  - event: distribution.dispatched
-    source: ORGAN-VII
-    action: Announcement distributed via POSSE pipeline
+- type: artifact
+  description: Email workflow automation and scheduling
+consumes: []

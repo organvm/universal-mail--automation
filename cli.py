@@ -29,6 +29,7 @@ from core.rules import (
     should_star,
     should_keep_in_inbox,
     is_vip_sender,
+    is_protected_sender,
     is_time_sensitive,
     escalate_by_age,
     calculate_email_age_hours,
@@ -123,6 +124,7 @@ def run_labeler(
     has_categories = provider.capabilities & ProviderCapabilities.CATEGORIES
     vip_count = 0
     non_vip_skipped = 0
+    protected_count = 0  # trust receipt: protected senders skipped (never archived)
     result = ProcessingResult()
     state = StateManager(state_file) if state_file else None
     page_token = state.get_token() if state else None
@@ -162,6 +164,14 @@ def run_labeler(
                 if not msg:
                     continue
 
+                # PROTECTED-SENDER GATE (decision-layer short-circuit, mirrors
+                # icloud_triage.py): a protected sender is dropped from the action
+                # set entirely, so it never even gets archive=True. Defense in depth
+                # — the provider chokepoint (apply_actions) enforces it again.
+                if is_protected_sender(msg.sender):
+                    protected_count += 1
+                    continue
+
                 # VIP-only mode: skip non-VIP senders
                 if vip_only and not is_vip_sender(msg.sender):
                     non_vip_skipped += 1
@@ -176,8 +186,9 @@ def run_labeler(
                 stats[label] = stats.get(label, 0) + 1
                 result.add_label_stat(label)
 
-                # Build action
-                action = LabelAction(message_id=msg_id)
+                # Build action — carry the sender so the provider chokepoint can
+                # re-verify the protected gate before any archive/move.
+                action = LabelAction(message_id=msg_id, sender=msg.sender)
                 action.add_labels.append(label)
 
                 if tier_routing:
@@ -259,6 +270,11 @@ def run_labeler(
         raise
 
     result.label_counts = stats
+    logger.info(
+        f"Protected senders skipped (never archived): {protected_count}"
+        + (f" | VIP: {vip_count}" if vip_count else "")
+        + (f" | non-VIP skipped: {non_vip_skipped}" if non_vip_skipped else "")
+    )
     return result
 
 
@@ -753,8 +769,10 @@ def cmd_escalate(args: argparse.Namespace) -> int:
                 )
 
                 if not args.dry_run:
-                    # Build escalation action
-                    action = LabelAction(message_id=msg_id)
+                    # Build escalation action — carry the sender for the gate
+                    # (escalate only raises tier today, but keep the From attached
+                    # so the chokepoint stays safe if target_folder becomes a move).
+                    action = LabelAction(message_id=msg_id, sender=msg.sender)
 
                     # Apply new tier category
                     if has_categories:

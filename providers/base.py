@@ -11,6 +11,7 @@ from typing import List, Optional, Iterator, Dict, Any, Tuple
 from enum import Flag, auto
 
 from core.models import EmailMessage, LabelAction, ProcessingResult
+from core.rules import is_protected_sender
 
 
 class ProviderCapabilities(Flag):
@@ -270,6 +271,25 @@ class EmailProvider(ABC):
         """
         pass
 
+    def _drop_if_protected(self, action: LabelAction) -> bool:
+        """Fail-closed never-archive gate, enforced at the provider CHOKEPOINT.
+
+        The product's headline invariant — a protected sender is NEVER archived or
+        moved out of inbox — lives HERE (and in the Gmail apply_actions override),
+        because every provider funnels through apply_actions and the From is
+        carried on LabelAction.sender. If the sender is protected, neutralize every
+        out-of-inbox operation IN PLACE (archive=False; strip INBOX/\\Inbox from
+        remove_labels) and return True so the caller can also suppress the
+        label-as-MOVE for folder providers. A blank sender fails closed (protected).
+        """
+        if not is_protected_sender(action.sender):
+            return False
+        action.archive = False
+        action.remove_labels = [
+            lbl for lbl in action.remove_labels if lbl.upper() not in ("INBOX", "\\INBOX")
+        ]
+        return True
+
     def apply_actions(self, actions: List[LabelAction]) -> ProcessingResult:
         """
         Apply a batch of label actions.
@@ -285,11 +305,17 @@ class EmailProvider(ABC):
         """
         result = ProcessingResult()
         for action in actions:
+            protected = self._drop_if_protected(action)
+            # For FOLDER providers, applying a category label IS itself an
+            # out-of-inbox MOVE (Outlook/Mailapp apply_label moves the message),
+            # so a protected sender must not have labels applied either.
+            move_via_label = protected and bool(self.capabilities & ProviderCapabilities.FOLDERS)
             try:
-                for label in action.add_labels:
-                    self.ensure_label_exists(label)
-                    if self.apply_label(action.message_id, label):
-                        result.add_label_stat(label)
+                if not move_via_label:
+                    for label in action.add_labels:
+                        self.ensure_label_exists(label)
+                        if self.apply_label(action.message_id, label):
+                            result.add_label_stat(label)
                 for label in action.remove_labels:
                     self.remove_label(action.message_id, label)
                 if action.archive:

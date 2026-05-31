@@ -378,6 +378,14 @@ class GmailProvider(EmailProvider):
         batches: Dict[tuple, List[str]] = defaultdict(list)
 
         for action in actions:
+            # PROTECTED-SENDER GATE (Gmail overrides apply_actions, so it does NOT
+            # inherit base.apply_actions' gate — enforce the same chokepoint here).
+            # _drop_if_protected clears archive + strips INBOX from remove_labels in
+            # place, so the INBOX-removal below becomes a no-op for protected mail.
+            # Label ADDS are kept: on Gmail a label is additive, not an out-of-inbox
+            # move, so protected mail stays in the inbox AND gets categorized.
+            self._drop_if_protected(action)
+
             # Ensure labels exist
             add_ids = []
             for label in action.add_labels:

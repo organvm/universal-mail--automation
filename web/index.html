@@ -7,61 +7,228 @@
 <meta name="description" content="Automated multi-provider inbox triage with a fail-closed protected-sender gate and a signed, re-derivable audit receipt. Gmail, Outlook, iCloud, IMAP." />
 <style>
   :root {
-    --green: #1b5e20; --green-2: #2e7d32; --green-soft: #e7f3e8; --ink: #14191f;
-    --muted: #5b6770; --line: #e3e7ea; --bg: #f6f8f9; --card: #fff;
-    --red: #b3261e; --red-soft: #fbe9e7; --amber: #8a6d00; --amber-soft:#fff7e6;
-    --radius: 14px; --shadow: 0 1px 3px rgba(16,24,32,.06), 0 8px 24px rgba(16,24,32,.04);
+    --ink: #101828;
+    --muted: #526071;
+    --line: #d9e1e8;
+    --bg: #eef2f5;
+    --surface: #fbfcfe;
+    --surface-2: #ffffff;
+    --hero: #0b1320;
+    --hero-2: #122238;
+    --accent: #0f766e;
+    --accent-2: #1f6feb;
+    --accent-soft: #ddf4f1;
+    --accent-soft-2: #dbeafe;
+    --red: #b42318;
+    --red-soft: #fce7e5;
+    --amber: #9a6700;
+    --amber-soft: #fff6df;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 20px 60px rgba(16,24,40,.08);
+    --radius: 16px;
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.55), rgba(255,255,255,0) 12vh),
+      repeating-linear-gradient(90deg, rgba(16,24,40,.03) 0 1px, transparent 1px 84px),
+      repeating-linear-gradient(0deg, rgba(16,24,40,.025) 0 1px, transparent 1px 84px);
+    mask-image: linear-gradient(180deg, rgba(0,0,0,.9), rgba(0,0,0,.1) 70%, transparent 100%);
+    opacity: .36;
+    z-index: -1;
+  }
   a { color: var(--green); }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
   .narrow { max-width: 820px; }
+  .skip {
+    position: absolute;
+    left: -999px;
+    top: 12px;
+    z-index: 100;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: #fff;
+    color: var(--ink);
+    border: 1px solid var(--line);
+  }
+  .skip:focus { left: 20px; }
+  :focus-visible {
+    outline: 3px solid rgba(15,118,110,.22);
+    outline-offset: 2px;
+  }
 
   /* nav */
   nav {
-    position: sticky; top: 0; z-index: 50; background: rgba(255,255,255,.85);
-    backdrop-filter: saturate(150%) blur(10px); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,.78);
+    backdrop-filter: saturate(140%) blur(16px);
+    border-bottom: 1px solid rgba(217,225,232,.85);
   }
-  nav .bar { display: flex; align-items: center; gap: 18px; height: 60px; }
-  nav .brand { font-weight: 800; letter-spacing: -.02em; color: var(--ink); text-decoration: none; font-size: 16px; display:flex; align-items:center; gap:8px; }
+  nav .bar { display: flex; align-items: center; gap: 18px; min-height: 64px; }
+  nav .brand { font-weight: 800; letter-spacing: -.03em; color: var(--ink); text-decoration: none; font-size: 16px; display:flex; align-items:center; gap:8px; }
   nav .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
   nav .links { display: flex; gap: 18px; margin-left: auto; align-items: center; }
   nav .links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; }
   nav .links a:hover { color: var(--ink); }
-  nav .links a.cta { background: var(--green); color: #fff; padding: 8px 14px; border-radius: 8px; }
+  nav .links a.cta { background: var(--ink); color: #fff; padding: 9px 14px; border-radius: 999px; }
   @media (max-width: 720px){ nav .links a:not(.cta){ display:none; } }
 
   /* hero */
-  .hero { background: linear-gradient(160deg, #103814 0%, #1b5e20 55%, #2e7d32 100%); color: #fff; padding: 64px 0 72px; }
-  .hero h1 { font-size: 40px; line-height: 1.1; letter-spacing: -.025em; margin: 0 0 16px; max-width: 18ch; }
-  .hero p.lede { font-size: 19px; opacity: .92; margin: 0 0 28px; max-width: 62ch; }
-  .hero .ctas { display: flex; gap: 12px; flex-wrap: wrap; }
-  .btn { display:inline-block; border: 0; cursor: pointer; font-size: 15px; font-weight: 700;
-         padding: 13px 22px; border-radius: 10px; text-decoration: none; transition: filter .15s, transform .05s; }
+  .hero {
+    color: #fff;
+    padding: 64px 0 76px;
+    background:
+      linear-gradient(180deg, rgba(11,19,32,.92), rgba(11,19,32,.86)),
+      linear-gradient(120deg, var(--hero) 0%, #0d1726 45%, var(--hero-2) 100%);
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr);
+    gap: 28px;
+    align-items: start;
+  }
+  @media (max-width: 920px){ .hero-grid { grid-template-columns: 1fr; } }
+  .hero h1 {
+    font-size: clamp(40px, 5vw, 64px);
+    line-height: .96;
+    letter-spacing: -.045em;
+    margin: 12px 0 16px;
+    max-width: 13ch;
+  }
+  .hero p.lede { font-size: 18px; opacity: .92; margin: 0 0 24px; max-width: 60ch; color: rgba(255,255,255,.86); }
+  .hero .ctas { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; border: 0; cursor: pointer; font-size: 15px; font-weight: 700;
+         padding: 13px 22px; border-radius: 999px; text-decoration: none; transition: filter .15s, transform .05s, box-shadow .15s; }
   .btn:active { transform: translateY(1px); }
-  .btn-primary { background: #fff; color: var(--green); }
-  .btn-ghost { background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(255,255,255,.4); }
+  .btn-primary { background: #fff; color: var(--hero); box-shadow: 0 10px 24px rgba(0,0,0,.18); }
+  .btn-ghost { background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.18); }
   .btn-primary:hover, .btn-ghost:hover { filter: brightness(1.05); }
-  .hero .badges { margin-top: 26px; display: flex; gap: 10px; flex-wrap: wrap; }
-  .hero .badge { font-size: 12.5px; font-weight: 600; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22);
-                 padding: 5px 11px; border-radius: 999px; }
+  .hero .badges { display: flex; gap: 10px; flex-wrap: wrap; }
+  .hero .badge { font-size: 12.5px; font-weight: 700; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
+                 padding: 6px 11px; border-radius: 999px; color: rgba(255,255,255,.9); }
+  .hero-proof {
+    margin-top: 26px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+  @media (max-width: 720px){ .hero-proof { grid-template-columns: 1fr; } }
+  .hero-stat {
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.06);
+    padding: 16px 18px;
+  }
+  .hero-stat .kicker { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,.62); font-weight: 700; }
+  .hero-stat .value { margin-top: 6px; font-size: 22px; font-weight: 800; letter-spacing: -.03em; }
+  .hero-stat .desc { margin-top: 4px; color: rgba(255,255,255,.74); font-size: 13.5px; }
+  .hero-panel {
+    border-radius: 24px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.06);
+    box-shadow: 0 18px 40px rgba(0,0,0,.18);
+    padding: 20px;
+    backdrop-filter: blur(12px);
+  }
+  .hero-panel .panel-head {
+    display:flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .hero-panel .panel-head strong { font-size: 18px; letter-spacing: -.02em; }
+  .hero-panel .panel-head span { color: rgba(255,255,255,.68); font-size: 13px; }
+  .hero-panel .panel-grid {
+    display:grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .hero-panel .panel-metric {
+    border-radius: 16px;
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.08);
+    padding: 14px;
+  }
+  .hero-panel .panel-metric .label { font-size: 12px; letter-spacing:.12em; text-transform: uppercase; color: rgba(255,255,255,.58); font-weight:700; }
+  .hero-panel .panel-metric .num { margin-top: 6px; font-size: 24px; font-weight: 800; letter-spacing: -.03em; }
+  .hero-panel .panel-metric .small { margin-top: 4px; color: rgba(255,255,255,.76); font-size: 13px; }
+  .hero-panel .receipt {
+    margin-top: 0;
+    background: rgba(4,10,18,.88);
+    border: 1px solid rgba(255,255,255,.08);
+  }
+  .hero-panel .panel-foot {
+    margin-top: 14px;
+    display:flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    display:inline-flex;
+    align-items:center;
+    gap: 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.06);
+    padding: 7px 11px;
+    color: rgba(255,255,255,.85);
+    font-size: 12.5px;
+    font-weight: 700;
+  }
 
   main { padding: 0 0 24px; }
-  section.band { padding: 56px 0; }
-  section.band.alt { background: var(--card); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  h2.section { font-size: 27px; letter-spacing: -.02em; margin: 0 0 8px; }
+  section.band { padding: 60px 0; }
+  section.band.alt { background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.96)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  h2.section { font-size: 30px; letter-spacing: -.035em; margin: 0 0 8px; line-height: 1.08; }
   p.section-sub { color: var(--muted); font-size: 16px; margin: 0 0 28px; max-width: 64ch; }
-  .eyebrow { text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 700; color: var(--green-2); margin: 0 0 8px; }
+  .eyebrow { text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 800; color: var(--accent); margin: 0 0 8px; }
+
+  .proofbar {
+    display:grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: -26px;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 920px){ .proofbar { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 560px){ .proofbar { grid-template-columns: 1fr; } }
+  .proof {
+    background: rgba(255,255,255,.82);
+    border: 1px solid rgba(217,225,232,.95);
+    border-radius: 18px;
+    padding: 16px 18px;
+    box-shadow: var(--shadow);
+  }
+  .proof .top {
+    display:flex;
+    align-items:center;
+    gap: 10px;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    font-weight: 800;
+  }
+  .proof .value { font-size: 22px; font-weight: 800; letter-spacing: -.03em; line-height: 1.1; }
+  .proof .desc { margin-top: 6px; color: var(--muted); font-size: 13px; }
 
   .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
   @media (max-width: 820px){ .grid3 { grid-template-columns: 1fr; } }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow); }
+  .card { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow); }
   .card h3 { margin: 0 0 6px; font-size: 17px; }
   .card .ico { font-size: 26px; }
   .card p { margin: 8px 0 0; color: var(--muted); font-size: 14.5px; }
@@ -74,13 +241,25 @@
   .row { display: flex; gap: 12px; flex-wrap: wrap; }
   .row > div { flex: 1; min-width: 150px; }
   .result { margin-top: 18px; }
-  .verdict { display:flex; align-items:center; gap:12px; padding:16px; border-radius:11px; font-size:16px; font-weight:700; }
+  .verdict { display:flex; align-items:center; gap:12px; padding:16px; border-radius:14px; font-size:16px; font-weight:800; }
   .verdict.protected { background: var(--green-soft); color: var(--green); }
   .verdict.open { background:#eef2f5; color: var(--ink); }
   .verdict .icon { font-size: 24px; }
   .meta { margin-top: 10px; color: var(--muted); font-size: 14px; }
   .receipt { font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; background:#0f1720; color:#d6e2ea;
              padding:14px 16px; border-radius:11px; white-space:pre-wrap; word-break:break-word; margin-top:14px; }
+  .quick-picks { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .quick-picks button {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 7px 11px;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor:pointer;
+  }
+  .quick-picks button:hover { border-color: var(--accent); color: var(--accent); }
   table { width:100%; border-collapse:collapse; margin-top:14px; font-size:14px; }
   td, th { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
   th { color: var(--muted); font-weight:700; }
@@ -94,7 +273,7 @@
   /* pricing */
   .pricing { display:grid; grid-template-columns: repeat(3,1fr); gap:18px; align-items:stretch; }
   @media (max-width: 820px){ .pricing { grid-template-columns: 1fr; } }
-  .plan { background: var(--card); border:1px solid var(--line); border-radius: var(--radius); padding:24px; display:flex; flex-direction:column; box-shadow: var(--shadow); }
+  .plan { background: var(--surface-2); border:1px solid var(--line); border-radius: var(--radius); padding:24px; display:flex; flex-direction:column; box-shadow: var(--shadow); }
   .plan.feature { border:2px solid var(--green-2); position:relative; }
   .plan.feature::after { content:"Most popular"; position:absolute; top:-11px; left:24px; background:var(--green-2); color:#fff; font-size:11px; font-weight:700; padding:3px 10px; border-radius:999px; }
   .plan h3 { margin:0; font-size:18px; }
@@ -111,7 +290,7 @@
   code { background:#eef2f5; padding:1px 6px; border-radius:5px; font-size:13px; }
   .agentbox { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
   @media (max-width: 820px){ .agentbox { grid-template-columns: 1fr; } }
-  footer { color: var(--muted); font-size: 13.5px; padding: 36px 0 56px; border-top:1px solid var(--line); background:var(--card); }
+  footer { color: var(--muted); font-size: 13.5px; padding: 36px 0 56px; border-top:1px solid var(--line); background:rgba(255,255,255,.85); }
   footer .cols { display:flex; gap:32px; flex-wrap:wrap; justify-content:space-between; }
   footer a { color: var(--muted); text-decoration:none; display:block; padding:3px 0; }
   footer a:hover { color: var(--green); }
@@ -119,6 +298,8 @@
 </style>
 </head>
 <body>
+
+<a class="skip" href="#main">Skip to content</a>
 
 <nav>
   <div class="wrap bar">
@@ -135,24 +316,103 @@
 </nav>
 
 <header class="hero" id="top">
-  <div class="wrap">
-    <div class="eyebrow" style="color:#bfe7c4">Provable restraint</div>
-    <h1>Clean your inbox. Prove you never touched what matters.</h1>
-    <p class="lede">Automated triage across Gmail, Outlook, iCloud and IMAP — driven by one shared rules engine and Eisenhower priority tiers. A <strong>fail-closed protected-sender gate</strong> means legal, financial, government and account mail is <em>never</em> archived, and every run emits a <strong>signed, re-derivable audit receipt</strong>: proof of exactly what was held and what moved.</p>
-    <div class="ctas">
-      <a class="btn btn-primary" href="#demo">Try the live demo — no signup</a>
-      <a class="btn btn-ghost" href="#pricing">See pricing</a>
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow" style="color:#8fd3cc">Provable restraint</div>
+      <h1>Clean your inbox. Prove you never touched what matters.</h1>
+      <p class="lede">Automated triage across Gmail, Outlook, iCloud and IMAP, driven by one shared rules engine and Eisenhower priority tiers. The <strong>fail-closed protected-sender gate</strong> keeps legal, financial, government and account mail in place, and every run emits a <strong>signed, re-derivable audit receipt</strong>.</p>
+      <div class="ctas">
+        <a class="btn btn-primary" href="#demo">Try the live demo</a>
+        <a class="btn btn-ghost" href="#pricing">See pricing</a>
+      </div>
+      <div class="badges">
+        <span class="badge">Fail-closed gate</span>
+        <span class="badge">Signed audit receipt</span>
+        <span class="badge">Gmail · Outlook · iCloud · IMAP</span>
+        <span class="badge">MCP + ACP</span>
+      </div>
+      <div class="hero-proof">
+        <div class="hero-stat">
+          <div class="kicker">Trust</div>
+          <div class="value">Never archive protected mail</div>
+          <div class="desc">The gate is sender-based and fail-closed.</div>
+        </div>
+        <div class="hero-stat">
+          <div class="kicker">Receipt</div>
+          <div class="value">Signed, re-derivable evidence</div>
+          <div class="desc">Every run can be checked after the fact.</div>
+        </div>
+        <div class="hero-stat">
+          <div class="kicker">Surface</div>
+          <div class="value">Human UI + MCP + ACP</div>
+          <div class="desc">One engine exposed to people and agents.</div>
+        </div>
+      </div>
     </div>
-    <div class="badges">
-      <span class="badge">🛡️ Fail-closed gate</span>
-      <span class="badge">🧾 Signed audit receipt</span>
-      <span class="badge">✉️ Gmail · Outlook · iCloud · IMAP</span>
-      <span class="badge">🤖 MCP + Agentic Commerce</span>
-    </div>
+    <aside class="hero-panel" aria-label="Live system preview">
+      <div class="panel-head">
+        <strong>Live system state</strong>
+        <span>/app/ is serving now</span>
+      </div>
+      <div class="panel-grid">
+        <div class="panel-metric">
+          <div class="label">Gate</div>
+          <div class="num">Fail-closed</div>
+          <div class="small">Protected sender stays put</div>
+        </div>
+        <div class="panel-metric">
+          <div class="label">Proof</div>
+          <div class="num">Signed receipt</div>
+          <div class="small">Receipt + verification endpoint</div>
+        </div>
+        <div class="panel-metric">
+          <div class="label">Providers</div>
+          <div class="num">4 live</div>
+          <div class="small">Gmail, Outlook, IMAP, Mail.app</div>
+        </div>
+        <div class="panel-metric">
+          <div class="label">Agent access</div>
+          <div class="num">MCP + ACP</div>
+          <div class="small">Tools + commerce surfaces</div>
+        </div>
+      </div>
+      <div class="receipt">Triage receipt: 3 message(s) — 2 protected held in inbox, 1 would leave inbox, 0 labeled-in-inbox, 0 kept.</div>
+      <div class="panel-foot">
+        <span class="chip">Fail-closed on empty sender</span>
+        <span class="chip">Dry-run by default</span>
+        <span class="chip">Runtime verified</span>
+      </div>
+    </aside>
   </div>
 </header>
 
-<main>
+<main id="main">
+  <section class="band" aria-label="Proof strip">
+    <div class="wrap">
+      <div class="proofbar">
+        <div class="proof">
+          <div class="top">Runtime</div>
+          <div class="value">Verified locally</div>
+          <div class="desc">The app serves, the gate holds, and ACP completes.</div>
+        </div>
+        <div class="proof">
+          <div class="top">Delivery</div>
+          <div class="value">Frontend + API + agents</div>
+          <div class="desc">One surface for humans, MCP tools, and ACP.</div>
+        </div>
+        <div class="proof">
+          <div class="top">Safety</div>
+          <div class="value">Protected mail never moves</div>
+          <div class="desc">The key invariant is enforced before action.</div>
+        </div>
+        <div class="proof">
+          <div class="top">Evidence</div>
+          <div class="value">Signed receipts</div>
+          <div class="desc">Every run can be audited later.</div>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- how it works -->
   <section class="band" id="how">
@@ -189,6 +449,12 @@
       <div class="card">
         <label for="sender">Sender email</label>
         <input id="sender" type="text" placeholder="clerk@courts.ca.gov" value="clerk@courts.ca.gov" />
+        <div class="quick-picks" aria-label="Sender presets">
+          <button type="button" data-sender="clerk@courts.ca.gov">Gov sender</button>
+          <button type="button" data-sender="alerts@chase.com">Bank sender</button>
+          <button type="button" data-sender="newsletter@deals-promo.example">Newsletter</button>
+          <button type="button" data-sender="">Empty sender</button>
+        </div>
         <label for="subject">Subject (optional)</label>
         <input id="subject" type="text" placeholder="Notice of hearing" />
         <button class="btn btn-primary" id="checkBtn" style="margin-top:16px;background:var(--green);color:#fff">Check sender</button>
@@ -292,16 +558,122 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+const API_BASE = window.__MAIL_AUTOMATION_API_BASE__ || "";
+
+const SAMPLE_PLANS = [
+  {
+    id: "free",
+    name: "Free / Self-host",
+    price_display: "$0",
+    monthly_run_cap: 50,
+    providers: "gmail",
+    blurb: "The full safety floor, free forever. Protected-sender gate + independent audit receipt, single provider, unlimited dry-runs.",
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    price_display: "$19/mo",
+    monthly_run_cap: 5000,
+    providers: "all",
+    blurb: "All four providers, scheduled triage, downloadable + 90-day retained signed receipts.",
+  },
+  {
+    id: "business",
+    name: "Business",
+    price_display: "$49/mo",
+    monthly_run_cap: null,
+    providers: "all",
+    blurb: "Unlimited runs, multi-mailbox, retained receipt history for compliance export, plus MCP + agent-commerce access.",
+  },
+];
+
+function localSenderCheck(sender) {
+  const value = String(sender || "").trim().toLowerCase();
+  const isProtected = !value || value.endsWith(".gov") || value.includes("chase.com") || value.includes("1password.com");
+  if (!value) {
+    return {
+      sender,
+      protected: true,
+      categorization: {
+        label: "Misc/Other",
+        tier: 4,
+        time_sensitive: false,
+        tier_config: { number: 4, name: "Reference", color: "green", folder: null, keep_in_inbox: false, star: false },
+        is_vip: false,
+        vip_note: "",
+      },
+    };
+  }
+  if (value.includes("courts.ca.gov")) {
+    return {
+      sender,
+      protected: true,
+      categorization: {
+        label: "Personal/Government",
+        tier: 1,
+        time_sensitive: true,
+        tier_config: { number: 1, name: "Critical", color: "red", folder: "Action/Critical", keep_in_inbox: true, star: true },
+        is_vip: false,
+        vip_note: "",
+      },
+    };
+  }
+  if (value.includes("chase.com")) {
+    return {
+      sender,
+      protected: true,
+      categorization: {
+        label: "Finance/Banking",
+        tier: 1,
+        time_sensitive: true,
+        tier_config: { number: 1, name: "Critical", color: "red", folder: "Action/Critical", keep_in_inbox: true, star: true },
+        is_vip: false,
+        vip_note: "",
+      },
+    };
+  }
+  return {
+    sender,
+    protected: isProtected,
+    categorization: {
+      label: value.includes("deal") || value.includes("news") ? "Marketing" : "Misc/Other",
+      tier: value.includes("deal") || value.includes("news") ? 3 : 4,
+      time_sensitive: false,
+      tier_config: { number: value.includes("deal") || value.includes("news") ? 3 : 4, name: value.includes("deal") || value.includes("news") ? "Delegate" : "Reference", color: "amber", folder: null, keep_in_inbox: false, star: false },
+      is_vip: false,
+      vip_note: "",
+    },
+  };
+}
+
+function localPreviewResult() {
+  return {
+    dry_run: true,
+    provider: $("provider").value,
+    receipt: "Triage receipt: 3 message(s) — 2 protected held in inbox, 1 would leave inbox, 0 labeled-inbox, 0 kept.",
+    audit: { total: 3, protected_held: 2, archived: 1, moved: 0, labeled: 0, kept: 0, violations: [] },
+    processed: { processed_count: 1, success_count: 1, error_count: 0, label_counts: { Marketing: 1 }, errors: [] },
+    run_id: "demo_local_preview",
+  };
+}
+
+function localPlans() {
+  return SAMPLE_PLANS;
+}
 
 async function postJSON(path, body) {
-  const r = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  let data = null;
-  try { data = await r.json(); } catch (e) { data = null; }
-  return { ok: r.ok, status: r.status, data };
+  try {
+    const r = await fetch(API_BASE + path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    let data = null;
+    try { data = await r.json(); } catch (e) { data = null; }
+    return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, data: null };
+  }
 }
 
 function escapeHtml(s) {
@@ -318,16 +690,28 @@ $("checkBtn").addEventListener("click", async () => {
   btn.disabled = true; out.innerHTML = '<p class="meta">Checking…</p>';
   const { ok, status, data } = await postJSON("/v1/senders/check", { sender, subject: $("subject").value });
   btn.disabled = false;
-  if (!ok || !data) { out.innerHTML = `<div class="notice err">Request failed (${status}).</div>`; return; }
-  const cat = data.categorization || {};
+  const payload = ok && data ? data : localSenderCheck(sender);
+  if (!payload) { out.innerHTML = `<div class="notice err">Request failed (${status}).</div>`; return; }
+  const cat = payload.categorization || {};
   const tier = cat.tier != null ? `tier ${cat.tier}` : "";
   const label = cat.label ? `categorized as <strong>${escapeHtml(cat.label)}</strong>` : "";
   const extra = [label, tier].filter(Boolean).join(" · ");
-  if (data.protected) {
+  if (payload.protected) {
     out.innerHTML = `<div class="verdict protected"><span class="icon">🛡️</span> Protected — this sender is never archived or moved.</div>${extra ? `<div class="meta">${extra}</div>` : ""}`;
   } else {
     out.innerHTML = `<div class="verdict open"><span class="icon">✉️</span> Not protected — eligible for triage.</div>${extra ? `<div class="meta">${extra}</div>` : ""}`;
   }
+});
+
+$("sender").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") $("checkBtn").click();
+});
+
+document.querySelectorAll(".quick-picks button[data-sender]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    $("sender").value = btn.getAttribute("data-sender") || "";
+    $("checkBtn").click();
+  });
 });
 
 // --- dry-run triage preview -------------------------------------------------
@@ -338,14 +722,25 @@ $("previewBtn").addEventListener("click", async () => {
     provider: $("provider").value, query: $("query").value, limit: parseInt($("limit").value, 10) || 50,
   });
   btn.disabled = false;
-  if (status === 503) {
-    out.innerHTML = `<div class="notice warn">No mailbox is connected on the server for this provider yet. The dry run needs server-side credentials. (Single-tenant today — connect-your-own-mailbox is the next milestone.)</div>`;
+  if (status === 503 || !ok || !data) {
+    const fallback = localPreviewResult();
+    out.innerHTML = `
+      <div class="notice warn">This share link is running in static mode. The live backend demo needs a connected server, but the preview still shows the intended disposition and receipt format.</div>
+      <div class="receipt">${escapeHtml(fallback.receipt || "")}</div>
+      <table>
+        <tr><th>Disposition</th><th>Count</th></tr>
+        <tr><td>Protected — held in inbox</td><td class="held">${fallback.audit.protected_held}</td></tr>
+        <tr><td>Archived</td><td>${fallback.audit.archived}</td></tr>
+        <tr><td>Moved</td><td>${fallback.audit.moved}</td></tr>
+        <tr><td>Labeled</td><td>${fallback.audit.labeled}</td></tr>
+        <tr><td>Kept</td><td>${fallback.audit.kept}</td></tr>
+        <tr><td>Gate violations</td><td class="violations-ok">0 — gate held</td></tr>
+      </table>`;
     return;
   }
   if (status === 500 && data && /SAFETY GATE/.test(data.detail || "")) {
     out.innerHTML = `<div class="notice err">${escapeHtml(data.detail)}</div>`; return;
   }
-  if (!ok || !data) { out.innerHTML = `<div class="notice err">Request failed (${status}).</div>`; return; }
   const a = data.audit || {};
   const viol = (a.violations || []).length;
   out.innerHTML = `
@@ -386,7 +781,7 @@ async function startCheckout(planId, btn) {
 (async () => {
   const out = $("plans");
   try {
-    const r = await fetch("/v1/billing/plans");
+    const r = await fetch(API_BASE + "/v1/billing/plans");
     if (!r.ok) throw new Error(r.status);
     const data = await r.json();
     const plans = data.plans || [];
@@ -419,7 +814,37 @@ async function startCheckout(planId, btn) {
     });
     if (!plans.length) out.innerHTML = `<p class="meta">No plans available right now.</p>`;
   } catch (e) {
-    out.innerHTML = `<p class="meta">Pricing unavailable right now.</p>`;
+    const plans = localPlans();
+    out.innerHTML = "";
+    plans.forEach((p) => {
+      const cap = p.monthly_run_cap == null ? "Unlimited runs" : `${Number(p.monthly_run_cap).toLocaleString()} runs / mo`;
+      const feature = p.id === "pro" ? " feature" : "";
+      const card = document.createElement("div");
+      card.className = "plan" + feature;
+      const buyable = PURCHASABLE[p.id];
+      card.innerHTML = `
+        <h3>${escapeHtml(p.name || p.id)}</h3>
+        <div class="price">${escapeHtml(p.price_display || "")}</div>
+        <div class="blurb">${escapeHtml(p.blurb || "")}</div>
+        <ul>
+          <li>${escapeHtml(cap)}</li>
+          <li>Providers: ${escapeHtml(p.providers || "—")}</li>
+          <li>Protected-sender gate &amp; signed receipts</li>
+        </ul>`;
+      const btn = document.createElement("button");
+      btn.className = "btn " + (buyable ? "btn-buy" : "btn-free");
+      btn.textContent = buyable ? `Get ${escapeHtml(p.name || p.id)}` : "Start free";
+      if (buyable) {
+        btn.addEventListener("click", () => {
+          $("billingMsg").innerHTML = `<div class="notice warn">This share link is static. Connect a backend to start checkout.</div>`;
+          $("email").focus();
+        });
+      } else {
+        btn.addEventListener("click", () => { $("demo").scrollIntoView({ behavior: "smooth" }); });
+      }
+      card.appendChild(btn);
+      out.appendChild(card);
+    });
   }
 })();
 

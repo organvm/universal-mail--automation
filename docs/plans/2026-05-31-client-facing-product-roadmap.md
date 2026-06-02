@@ -42,7 +42,8 @@ is the whole sale. We deliberately avoid the crowded prosumer AI-inbox lane.
 | **`LABEL_IS_MOVE` abstraction** | One gate stays correct across additive-label providers (Gmail/IMAP) and move-on-label providers (Outlook/Mail.app). |
 | **Independent audit receipt** | Append-only JSONL recording *actual* post-execution disposition; re-derives protection from the raw sender; raises on any violation; CLI exits non-zero on violation. |
 | **Externalized protected config** | Curated, gitignored local list (legal/gov/financial/platform/orgs/self categories) merged with synthetic examples. |
-| **Test coverage** | 189 passing / 3 skipped; provider-parity probes for the move-vs-label invariant. |
+| **HTTP + agent commerce surface** | FastAPI backend, dashboard, MCP tools, ACP credit-pack checkout, Stripe billing hooks, and a Cloudflare share/demo Worker. |
+| **Test coverage** | 248 passing locally and in CI on Python 3.11 / 3.12; provider-parity probes for the move-vs-label invariant. |
 
 ## 4. MVP gaps (what blocks a paying customer), ranked by how hard they block
 
@@ -52,9 +53,9 @@ is the whole sale. We deliberately avoid the crowded prosumer AI-inbox lane.
    because** the engine never permanently deletes (moves-only). The safety design is also the cost moat;
    adding hard-delete would multiply the verification cost. Treat moves-only as a load-bearing decision.
 3. **Undo / restore** — table-stakes trust feature: replay the inverse disposition from the audit log.
-4. **Scheduler reliability** — the unattended runner needs portable paths and a clean install path.
-5. **Client surface** — no UI/CLI packaging a non-engineer can run.
-6. **Trust/compliance docs** — the strongest technical asset isn't yet a buyer-facing story.
+4. **Live scheduler proof** — the source runner now has portable paths and fixed plist templates; the remaining gap is proving an installed scheduler against real credentials.
+5. **Client onboarding** — dashboard exists, but a non-engineer still needs guided mailbox connection and account setup.
+6. **Trust/compliance docs** — the strongest technical asset is partly documented, but not yet a complete buyer-facing trust center.
 
 ## 5. The "superpowered" layer — Compliance Evidence Pack
 
@@ -67,8 +68,8 @@ observer.
 ## 6. Four-phase roadmap
 
 - **Phase 0 — Harden.** Credential-hygiene pass (broker-only secrets, no hardcoded defaults); ship
-  undo/restore; fix the scheduler (portable runner + clean install); quarantine any pre-gate legacy
-  scripts; promote the move-vs-label probes into the test suite.
+  undo/restore; prove the installed scheduler against real credentials; quarantine any pre-gate legacy
+  scripts; keep the move-vs-label probes in the test suite.
 - **Phase 1 — MVP.** Multi-tenant onboarding/auth; provider verification; minimal client surface.
 - **Phase 2 — Superpowered.** Compliance Evidence Pack as the headline; trust-center page.
 - **Phase 3 — GA.** Packaging, billing, docs, support path.
@@ -86,7 +87,7 @@ observer.
 ## 8. Top next actions
 
 1. **Phase 0 security hardening** — credential hygiene + secrets-broker enforcement (internal, prerequisite to any external launch).
-2. **Fix the scheduler** — portable runner + clean install path.
+2. **Prove the scheduler install** — source paths are fixed; verify the deployed LaunchAgent only in an authorized runtime lane.
 3. **Ship undo/restore** — inverse-replay from the audit log; the #1 table-stakes trust gap.
 4. **Trust-center page** — convert the gate + receipt into the buyer-facing compliance story.
 5. **Quarantine pre-gate legacy scripts + promote provider-parity probes into the test suite** — protect the keystone invariant.

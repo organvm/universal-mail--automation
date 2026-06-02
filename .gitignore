@@ -31,3 +31,7 @@ venv/
 
 # Local Claude Code settings (personal permission rules) — never commit.
 .claude/settings.local.json
+
+# Local agent/session state — contains transcripts, prompts, and private context.
+.claude/sessions/
+.serena/

@@ -33,6 +33,19 @@ wrangler deploy
 
 The deploy uses `wrangler.toml` and publishes the Worker plus `web/` assets. Verify the live surface after deploy before claiming the share URL is current.
 
+## CI Deployment
+
+The main CI workflow includes a `cloudflare-share-deploy` job for pushes to
+`main`. It runs after the Python test matrix and deploys with `wrangler deploy`
+when the repository secret `CLOUDFLARE_API_TOKEN` is configured.
+
+After deployment, CI smoke-tests the live share surface:
+
+- `GET /health`
+- `GET /app/`
+- `GET /v1/billing/plans`
+- `POST /v1/senders/check` with a protected government sender
+
 ## Safety Boundary
 
 Do not present the Worker URL as the canonical production API unless that is explicitly decided later. It is a review surface for the dashboard and safety demonstration.

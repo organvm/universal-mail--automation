@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Universal Mail Automation — clean email without losing important mail</title>
-<meta name="description" content="Clean your inbox without losing important mail. See what stays, what can move, and what needs review." />
+<title>Universal Mail Automation — clean your inbox, prove you never touched what matters</title>
+<meta name="description" content="Automated multi-provider inbox triage with a fail-closed protected-sender gate and a signed, re-derivable audit receipt. Gmail, Outlook, iCloud, IMAP." />
 <style>
   :root {
     --ink: #101828;
@@ -19,9 +19,9 @@
     --accent-2: #1f6feb;
     --accent-soft: #ddf4f1;
     --accent-soft-2: #dbeafe;
-    --green: #0f766e;
-    --green-2: #1f6feb;
-    --green-soft: #ddf4f1;
+    --green: var(--accent);
+    --green-2: var(--accent-2);
+    --green-soft: var(--accent-soft);
     --red: #b42318;
     --red-soft: #fce7e5;
     --amber: #9a6700;
@@ -263,34 +263,6 @@
     cursor:pointer;
   }
   .quick-picks button:hover { border-color: var(--accent); color: var(--accent); }
-  .scenario { display:grid; gap: 10px; margin-top: 14px; }
-  .message-row {
-    display:grid;
-    grid-template-columns: minmax(160px, .95fr) minmax(220px, 1.45fr) minmax(120px, .7fr);
-    gap: 12px;
-    align-items:start;
-    border:1px solid var(--line);
-    border-radius: 12px;
-    background: #fff;
-    padding: 12px 14px;
-  }
-  @media (max-width: 760px){ .message-row { grid-template-columns: 1fr; } }
-  .message-row .from { font-weight: 800; font-size: 13px; word-break: break-word; }
-  .message-row .subject { color: var(--muted); font-size: 13.5px; }
-  .tag { display:inline-flex; justify-content:center; border-radius:999px; padding:5px 10px; font-size:12px; font-weight:800; white-space:nowrap; }
-  .tag.stay { background:var(--accent-soft); color:var(--accent); }
-  .tag.move { background:#eef2f5; color:var(--ink); }
-  .tag.review { background:var(--amber-soft); color:var(--amber); }
-  .receipt-grid {
-    display:grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-    margin-top: 16px;
-  }
-  @media (max-width: 760px){ .receipt-grid { grid-template-columns: 1fr; } }
-  .receipt-tile { border:1px solid var(--line); border-radius:12px; padding:14px; background:#fff; }
-  .receipt-tile strong { display:block; font-size:22px; line-height:1; margin-bottom:6px; letter-spacing:-.03em; }
-  .receipt-tile span { color:var(--muted); font-size:13px; }
   table { width:100%; border-collapse:collapse; margin-top:14px; font-size:14px; }
   td, th { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
   th { color: var(--muted); font-weight:700; }
@@ -337,11 +309,11 @@
     <a class="brand" href="#top"><span class="dot"></span> Universal Mail Automation</a>
     <div class="links">
       <a href="#how">How it works</a>
-      <a href="#demo">Sample audit</a>
+      <a href="#demo">Try it</a>
       <a href="#pricing">Pricing</a>
-      <a href="#advanced">Advanced</a>
+      <a href="#agents">For agents</a>
       <a href="/docs">API</a>
-      <a class="cta" href="#demo">Check my inbox risk</a>
+      <a class="cta" href="#demo">Get started</a>
     </div>
   </div>
 </nav>
@@ -349,75 +321,69 @@
 <header class="hero" id="top">
   <div class="wrap hero-grid">
     <div>
-      <div class="eyebrow" style="color:#8fd3cc">Inbox safety check</div>
-      <h1>Clean your inbox without losing important mail.</h1>
-      <p class="lede">We check court, bank, gov, account, and client mail first. Then you see what stays, what can move, and what needs review.</p>
+      <div class="eyebrow" style="color:#8fd3cc">Provable restraint</div>
+      <h1>Clean your inbox. Prove you never touched what matters.</h1>
+      <p class="lede">Automated triage across Gmail, Outlook, iCloud and IMAP, driven by one shared rules engine and Eisenhower priority tiers. The <strong>fail-closed protected-sender gate</strong> keeps legal, financial, government and account mail in place, and every run emits a <strong>signed, re-derivable audit receipt</strong>.</p>
       <div class="ctas">
-        <a class="btn btn-primary" href="#demo">Check my inbox risk</a>
-        <a class="btn btn-ghost" href="#receipt">See a sample receipt</a>
+        <a class="btn btn-primary" href="#demo">Try the live demo</a>
+        <a class="btn btn-ghost" href="#pricing">See pricing</a>
       </div>
       <div class="badges">
-        <span class="badge">Audit</span>
-        <span class="badge">Dry run</span>
-        <span class="badge">You say yes</span>
-        <span class="badge">Receipt included</span>
+        <span class="badge">Fail-closed gate</span>
+        <span class="badge">Signed audit receipt</span>
         <span class="badge">Gmail · Outlook · iCloud · IMAP</span>
+        <span class="badge">MCP + ACP</span>
       </div>
       <div class="hero-proof">
         <div class="hero-stat">
-          <div class="kicker">Step 1</div>
-          <div class="value">Find key mail</div>
-          <div class="desc">Court. Bank. Gov. Client.</div>
+          <div class="kicker">Trust</div>
+          <div class="value">Never archive protected mail</div>
+          <div class="desc">The gate is sender-based and fail-closed.</div>
         </div>
         <div class="hero-stat">
-          <div class="kicker">Step 2</div>
-          <div class="value">Mark the rest</div>
-          <div class="desc">What stays. What can move.</div>
+          <div class="kicker">Receipt</div>
+          <div class="value">Signed, re-derivable evidence</div>
+          <div class="desc">Every run can be checked after the fact.</div>
         </div>
         <div class="hero-stat">
-          <div class="kicker">Step 3</div>
-          <div class="value">Move on yes</div>
-          <div class="desc">You approve. You get proof.</div>
+          <div class="kicker">Surface</div>
+          <div class="value">Human UI + MCP + ACP</div>
+          <div class="desc">One engine exposed to people and agents.</div>
         </div>
       </div>
     </div>
-    <aside class="hero-panel" aria-label="Protected inbox audit preview">
+    <aside class="hero-panel" aria-label="Live system preview">
       <div class="panel-head">
-        <strong>Sample receipt</strong>
-        <span>dry run</span>
+        <strong>Live system state</strong>
+        <span>/app/ is serving now</span>
       </div>
       <div class="panel-grid">
         <div class="panel-metric">
-          <div class="label">Stays</div>
-          <div class="num">5</div>
-          <div class="small">Court. Bank. Client.</div>
+          <div class="label">Gate</div>
+          <div class="num">Fail-closed</div>
+          <div class="small">Protected sender stays put</div>
         </div>
         <div class="panel-metric">
-          <div class="label">Can move</div>
-          <div class="num">3</div>
-          <div class="small">News and promos</div>
+          <div class="label">Proof</div>
+          <div class="num">Signed receipt</div>
+          <div class="small">Receipt + verification endpoint</div>
         </div>
         <div class="panel-metric">
-          <div class="label">Needs review</div>
-          <div class="num">2</div>
-          <div class="small">Maybe bills. Maybe risk.</div>
+          <div class="label">Providers</div>
+          <div class="num">4 live</div>
+          <div class="small">Gmail, Outlook, IMAP, Mail.app</div>
         </div>
         <div class="panel-metric">
-          <div class="label">Action taken</div>
-          <div class="num">0</div>
-          <div class="small">Nothing moves yet</div>
+          <div class="label">Agent access</div>
+          <div class="num">MCP + ACP</div>
+          <div class="small">Tools + commerce surfaces</div>
         </div>
       </div>
-      <div class="receipt">Inbox risk receipt
-10 checked
-5 stay
-3 can move
-2 need review
-0 changed</div>
+      <div class="receipt">Triage receipt: 3 message(s) — 2 protected held in inbox, 1 would leave inbox, 0 labeled-in-inbox, 0 kept.</div>
       <div class="panel-foot">
-        <span class="chip">No changes</span>
-        <span class="chip">Dry run</span>
-        <span class="chip">Your approval</span>
+        <span class="chip">Fail-closed on empty sender</span>
+        <span class="chip">Dry-run by default</span>
+        <span class="chip">Runtime verified</span>
       </div>
     </aside>
   </div>
@@ -428,24 +394,24 @@
     <div class="wrap">
       <div class="proofbar">
         <div class="proof">
-          <div class="top">Offer</div>
-          <div class="value">Look first</div>
-          <div class="desc">A report before a move.</div>
+          <div class="top">Runtime</div>
+          <div class="value">Verified locally</div>
+          <div class="desc">The app serves, the gate holds, and ACP completes.</div>
         </div>
         <div class="proof">
-          <div class="top">Decision</div>
-          <div class="value">Stay. Move. Review.</div>
-          <div class="desc">Three piles.</div>
+          <div class="top">Delivery</div>
+          <div class="value">Frontend + API + agents</div>
+          <div class="desc">One surface for humans, MCP tools, and ACP.</div>
         </div>
         <div class="proof">
           <div class="top">Safety</div>
-          <div class="value">No rush</div>
-          <div class="desc">Dry run, then yes.</div>
+          <div class="value">Protected mail never moves</div>
+          <div class="desc">The key invariant is enforced before action.</div>
         </div>
         <div class="proof">
           <div class="top">Evidence</div>
-          <div class="value">Keep proof</div>
-          <div class="desc">Before cleanup.</div>
+          <div class="value">Signed receipts</div>
+          <div class="desc">Every run can be audited later.</div>
         </div>
       </div>
     </div>
@@ -454,24 +420,24 @@
   <!-- how it works -->
   <section class="band" id="how">
     <div class="wrap">
-      <p class="eyebrow">How it works</p>
-      <h2 class="section">Find important mail first.</h2>
-      <p class="section-sub">Then choose what leaves the inbox.</p>
+      <p class="eyebrow">Why it's safe to automate</p>
+      <h2 class="section">Three guarantees, on for everyone</h2>
+      <p class="section-sub">The safety machinery is never a paid upgrade. Free accounts get the same gate and the same receipt — you pay for reach and retention, never for protection.</p>
       <div class="grid3">
         <div class="card">
-          <div class="ico">1</div>
-          <h3>Look first</h3>
-          <p>Find court, bank, gov, account, client, tax, and travel mail.</p>
+          <div class="ico">🛡️</div>
+          <h3>Protected-sender gate</h3>
+          <p>The gate decides on the real, parsed sending domain — not a fragile string match. Legal, financial, government and account senders are held in the inbox, always. The engine fails <em>closed</em>: a gate violation aborts the run.</p>
         </div>
         <div class="card">
-          <div class="ico">2</div>
-          <h3>Sort it</h3>
-          <p>Mark what stays, what can move, and what needs review. No changes yet.</p>
+          <div class="ico">🧾</div>
+          <h3>Signed audit receipt</h3>
+          <p>Every run produces an independent, re-derivable receipt — your <strong>Compliance Evidence Pack</strong>. It records what was protected, archived, moved and kept, and refuses to report success if a protected sender ever left the inbox.</p>
         </div>
         <div class="card">
-          <div class="ico">3</div>
-          <h3>Approve</h3>
-          <p>Nothing moves until you say yes. Then you get a receipt.</p>
+          <div class="ico">✉️</div>
+          <h3>One engine, every mailbox</h3>
+          <p>Gmail, Outlook (Graph), iCloud and generic IMAP behind a single provider interface and one categorization taxonomy. Same rules, same tiers, same receipts — whichever inbox you point it at.</p>
         </div>
       </div>
     </div>
@@ -479,88 +445,10 @@
 
   <!-- live demo -->
   <section class="band alt" id="demo">
-    <div class="wrap">
-      <p class="eyebrow">Sample inbox</p>
-      <h2 class="section">Ten messages. Three piles.</h2>
-      <p class="section-sub">Stays. Can move. Needs review.</p>
-      <div class="card">
-        <div class="scenario" aria-label="Sample inbox audit results">
-          <div class="message-row">
-            <div class="from">clerk@courts.ca.gov</div>
-            <div class="subject">Hearing date</div>
-            <div><span class="tag stay">Stays</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">alerts@chase.com</div>
-            <div class="subject">Large charge</div>
-            <div><span class="tag stay">Stays</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">irs.gov-updates@example.gov</div>
-            <div class="subject">Tax account</div>
-            <div><span class="tag stay">Stays</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">security@1password.com</div>
-            <div class="subject">Password reset</div>
-            <div><span class="tag stay">Stays</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">founder@client.example</div>
-            <div class="subject">Contract questions</div>
-            <div><span class="tag stay">Stays</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">newsletter@deals-promo.example</div>
-            <div class="subject">Sale roundup</div>
-            <div><span class="tag move">Can move</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">events@saas-webinar.example</div>
-            <div class="subject">Webinar recording</div>
-            <div><span class="tag move">Can move</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">notify@social.example</div>
-            <div class="subject">New followers</div>
-            <div><span class="tag move">Can move</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">billing@unknown-vendor.example</div>
-            <div class="subject">Past-due invoice</div>
-            <div><span class="tag review">Needs review</span></div>
-          </div>
-          <div class="message-row">
-            <div class="from">admin@new-domain.example</div>
-            <div class="subject">Account action</div>
-            <div><span class="tag review">Needs review</span></div>
-          </div>
-        </div>
-      </div>
-
-      <div id="receipt" class="card" style="margin-top:18px">
-        <p class="eyebrow">Sample receipt</p>
-        <h2 class="section">Proof before cleanup.</h2>
-        <p class="section-sub">Nothing moved. You have not said yes yet.</p>
-        <div class="receipt-grid">
-          <div class="receipt-tile"><strong>5</strong><span>Stay: court, bank, gov, account, client.</span></div>
-          <div class="receipt-tile"><strong>3</strong><span>Can move: news, promos, social.</span></div>
-          <div class="receipt-tile"><strong>2</strong><span>Need review: unknown bills, account mail.</span></div>
-        </div>
-        <div class="receipt">Inbox risk receipt
-mode: dry-run
-checked: 10
-stay: 5
-can move: 3
-need review: 2
-changed: 0
-why: no approval yet</div>
-      </div>
-
-      <div class="wrap narrow" style="padding:0;margin-top:44px">
+    <div class="wrap narrow">
       <p class="eyebrow">Live · no credentials</p>
-      <h2 class="section">Check a sender.</h2>
-      <p class="section-sub">One address. No login.</p>
+      <h2 class="section">Will it ever touch this sender?</h2>
+      <p class="section-sub">This calls the real gate on the real parsed domain. No mailbox, no signup — just proof of restraint.</p>
       <div class="card">
         <label for="sender">Sender email</label>
         <input id="sender" type="text" placeholder="clerk@courts.ca.gov" value="clerk@courts.ca.gov" />
@@ -572,12 +460,12 @@ why: no approval yet</div>
         </div>
         <label for="subject">Subject (optional)</label>
         <input id="subject" type="text" placeholder="Notice of hearing" />
-        <button class="btn btn-primary" id="checkBtn" style="margin-top:16px;background:var(--green);color:#fff">Check sender risk</button>
+        <button class="btn btn-primary" id="checkBtn" style="margin-top:16px;background:var(--green);color:#fff">Check sender</button>
         <div class="result" id="checkResult"></div>
       </div>
 
-      <h2 class="section" style="margin-top:40px">Preview a live audit.</h2>
-      <p class="section-sub">Dry run. Receipt. Nothing moves until you say yes.</p>
+      <h2 class="section" style="margin-top:40px">Preview a triage — nothing is touched</h2>
+      <p class="section-sub">A dry run shows exactly what <em>would</em> be archived plus the audit receipt. Requires a mailbox connected on the server.</p>
       <div class="card">
         <div class="row">
           <div>
@@ -599,47 +487,46 @@ why: no approval yet</div>
         <button class="btn btn-primary" id="previewBtn" style="margin-top:16px;background:var(--green);color:#fff">Preview (dry run)</button>
         <div class="result" id="previewResult"></div>
       </div>
-      </div>
     </div>
   </section>
 
   <!-- pricing -->
   <section class="band" id="pricing">
     <div class="wrap">
-      <p class="eyebrow">First offer</p>
-      <h2 class="section">Start with the audit.</h2>
-      <p class="section-sub">You get a sender list, three piles, risk notes, and a receipt. Cleanup comes later.</p>
+      <p class="eyebrow">Pricing</p>
+      <h2 class="section">Pay for reach, never for safety</h2>
+      <p class="section-sub">The gate and the signed receipt are included on every tier, including Free. Upgrade for more monthly runs, more providers, and retained receipts.</p>
       <div id="plans" class="pricing"><p class="meta">Loading plans…</p></div>
       <div class="card" style="margin-top:18px;max-width:480px">
-        <label for="email">Your email (for audit receipts)</label>
+        <label for="email">Your email (for checkout &amp; receipts)</label>
         <input id="email" type="email" placeholder="you@example.com" autocomplete="email" />
         <div id="billingMsg"></div>
       </div>
     </div>
   </section>
 
-  <!-- advanced -->
-  <section class="band alt" id="advanced">
+  <!-- agents -->
+  <section class="band alt" id="agents">
     <div class="wrap">
-      <p class="eyebrow">Advanced</p>
-      <h2 class="section">For builders</h2>
-      <p class="section-sub">Provider APIs, receipts, MCP, and ACP live here.</p>
+      <p class="eyebrow">Built for humans and agents</p>
+      <h2 class="section">First-class agent surface</h2>
+      <p class="section-sub">The same engine an inbox uses is exposed to AI agents — discover it, call it, and buy credits programmatically.</p>
       <div class="agentbox">
         <div class="card">
           <h3>🔌 MCP server</h3>
-          <p>Tools at <code>/mcp</code>, or local with <code>python -m mcp_server</code>. Dry run first.</p>
+          <p>Model Context Protocol tools over Streamable HTTP at <code>/mcp</code>, or run locally with <code>python -m mcp_server</code>. Dry-run by default; a gate violation surfaces as a tool error, never a silent success.</p>
         </div>
         <div class="card">
           <h3>💳 Agentic Commerce (ACP)</h3>
-          <p>Checkout at <code>/acp/checkout_sessions</code>. Credits once. Stripe monthly.</p>
+          <p>Agents buy one-time credit packs via the Agentic Commerce Protocol at <code>/acp/checkout_sessions</code> — idempotent and atomic. Subscriptions go through Stripe Checkout.</p>
         </div>
         <div class="card">
           <h3>🧭 Discovery</h3>
-          <p>Discovery lives at <a href="/.well-known/agent.json">agent.json</a>, <a href="/llms.txt">llms.txt</a>, and <a href="/server.json">server.json</a>.</p>
+          <p>Self-describing at <a href="/.well-known/agent.json">/.well-known/agent.json</a>, <a href="/llms.txt">/llms.txt</a> and the MCP registry <a href="/server.json">server.json</a>. Point an agent at the host and it learns the rest.</p>
         </div>
         <div class="card">
           <h3>🧾 Verifiable runs</h3>
-          <p>Each run gets a <code>run_id</code>. Fetch the receipt at <code>GET /v1/audit/{run_id}</code>.</p>
+          <p>Every triage returns a <code>run_id</code>; fetch the signed receipt anytime at <code>GET /v1/audit/{run_id}</code>. Trust is checkable, not asserted.</p>
         </div>
       </div>
     </div>
@@ -652,19 +539,19 @@ why: no approval yet</div>
     <div class="cols">
       <div style="max-width:42ch">
         <div style="font-weight:800;color:var(--ink);margin-bottom:6px">Universal Mail Automation</div>
-        <span class="pill">audit first</span>
-        <p style="margin-top:10px">Find what stays. Move what you approve.</p>
+        <span class="pill">fail-closed</span>
+        <p style="margin-top:10px">The audit receipt is your Compliance Evidence Pack — proof of what was protected and what moved. Safety is never a paid feature.</p>
       </div>
       <div>
         <strong style="color:var(--ink)">Product</strong>
         <a href="#how">How it works</a>
-        <a href="#demo">Sample audit</a>
+        <a href="#demo">Live demo</a>
         <a href="#pricing">Pricing</a>
       </div>
       <div>
         <strong style="color:var(--ink)">Developers</strong>
         <a href="/docs">API reference</a>
-        <a href="/mcp">MCP endpoint</a>
+        <a href="/server.json">MCP registry</a>
         <a href="/llms.txt">llms.txt</a>
         <a href="/health">Health</a>
       </div>
@@ -679,99 +566,29 @@ const API_BASE = window.__MAIL_AUTOMATION_API_BASE__ || "";
 const SAMPLE_PLANS = [
   {
     id: "free",
-    name: "Sample audit",
+    name: "Free / Self-host",
     price_display: "$0",
     monthly_run_cap: 50,
     providers: "gmail",
-    blurb: "Check one sender. Read a sample receipt. Nothing moves.",
+    blurb: "The full safety floor, free forever. Protected-sender gate + independent audit receipt, single provider, unlimited dry-runs.",
   },
   {
     id: "pro",
-    name: "Inbox safety audit",
-    price_display: "$29-$49",
+    name: "Pro",
+    price_display: "$19/mo",
     monthly_run_cap: 5000,
     providers: "all",
-    blurb: "One report with senders, risk notes, and a receipt.",
+    blurb: "All four providers, scheduled triage, downloadable + 90-day retained signed receipts.",
   },
   {
     id: "business",
-    name: "Assisted cleanup",
-    price_display: "$149-$299",
+    name: "Business",
+    price_display: "$49/mo",
     monthly_run_cap: null,
     providers: "all",
-    blurb: "A cleanup plan after the audit. Dry run first.",
+    blurb: "Unlimited runs, multi-mailbox, retained receipt history for compliance export, plus MCP + agent-commerce access.",
   },
 ];
-
-function localSenderCheck(sender) {
-  const value = String(sender || "").trim().toLowerCase();
-  const isProtected = !value || value.endsWith(".gov") || value.includes("chase.com") || value.includes("1password.com");
-  if (!value) {
-    return {
-      sender,
-      protected: true,
-      categorization: {
-        label: "Misc/Other",
-        tier: 4,
-        time_sensitive: false,
-        tier_config: { number: 4, name: "Reference", color: "green", folder: null, keep_in_inbox: false, star: false },
-        is_vip: false,
-        vip_note: "",
-      },
-    };
-  }
-  if (value.includes("courts.ca.gov")) {
-    return {
-      sender,
-      protected: true,
-      categorization: {
-        label: "Personal/Government",
-        tier: 1,
-        time_sensitive: true,
-        tier_config: { number: 1, name: "Critical", color: "red", folder: "Action/Critical", keep_in_inbox: true, star: true },
-        is_vip: false,
-        vip_note: "",
-      },
-    };
-  }
-  if (value.includes("chase.com")) {
-    return {
-      sender,
-      protected: true,
-      categorization: {
-        label: "Finance/Banking",
-        tier: 1,
-        time_sensitive: true,
-        tier_config: { number: 1, name: "Critical", color: "red", folder: "Action/Critical", keep_in_inbox: true, star: true },
-        is_vip: false,
-        vip_note: "",
-      },
-    };
-  }
-  return {
-    sender,
-    protected: isProtected,
-    categorization: {
-      label: value.includes("deal") || value.includes("news") ? "Marketing" : "Misc/Other",
-      tier: value.includes("deal") || value.includes("news") ? 3 : 4,
-      time_sensitive: false,
-      tier_config: { number: value.includes("deal") || value.includes("news") ? 3 : 4, name: value.includes("deal") || value.includes("news") ? "Delegate" : "Reference", color: "amber", folder: null, keep_in_inbox: false, star: false },
-      is_vip: false,
-      vip_note: "",
-    },
-  };
-}
-
-function localPreviewResult() {
-  return {
-    dry_run: true,
-    provider: $("provider").value,
-    receipt: "Inbox safety receipt: 3 checked. 2 stay. 1 can move. 0 changed.",
-    audit: { total: 3, protected_held: 2, archived: 1, moved: 0, labeled: 0, kept: 0, violations: [] },
-    processed: { processed_count: 1, success_count: 1, error_count: 0, label_counts: { Marketing: 1 }, errors: [] },
-    run_id: "demo_local_preview",
-  };
-}
 
 function localPlans() {
   return SAMPLE_PLANS;
@@ -802,20 +619,26 @@ function escapeHtml(s) {
 $("checkBtn").addEventListener("click", async () => {
   const btn = $("checkBtn"), out = $("checkResult");
   const sender = $("sender").value.trim();
-  if (!sender) { out.innerHTML = ''; return; }
   btn.disabled = true; out.innerHTML = '<p class="meta">Checking…</p>';
   const { ok, status, data } = await postJSON("/v1/senders/check", { sender, subject: $("subject").value });
   btn.disabled = false;
-  const payload = ok && data ? data : localSenderCheck(sender);
-  if (!payload) { out.innerHTML = `<div class="notice err">Request failed (${status}).</div>`; return; }
+  if (!ok || !data) {
+    const detail = data && data.detail ? ` ${escapeHtml(data.detail)}` : "";
+    const message = status === 0
+      ? "Cannot reach the API. Serve this page from the FastAPI app or the Worker demo."
+      : `Sender check failed (${status}).${detail}`;
+    out.innerHTML = `<div class="notice err">${message}</div>`;
+    return;
+  }
+  const payload = data;
   const cat = payload.categorization || {};
-  const tier = cat.tier != null ? `tier ${cat.tier}` : "";
+  const tier = cat.tier != null ? `tier ${escapeHtml(cat.tier)}` : "";
   const label = cat.label ? `categorized as <strong>${escapeHtml(cat.label)}</strong>` : "";
   const extra = [label, tier].filter(Boolean).join(" · ");
   if (payload.protected) {
-    out.innerHTML = `<div class="verdict protected"><span class="icon">🛡️</span> Stays. Keep this visible.</div>${extra ? `<div class="meta">${extra}</div>` : ""}`;
+    out.innerHTML = `<div class="verdict protected"><span class="icon">🛡️</span> Protected — this sender is never archived or moved.</div>${extra ? `<div class="meta">${extra}</div>` : ""}`;
   } else {
-    out.innerHTML = `<div class="verdict open"><span class="icon">✉️</span> Can move. Show it in the dry run first.</div>${extra ? `<div class="meta">${extra}</div>` : ""}`;
+    out.innerHTML = `<div class="verdict open"><span class="icon">✉️</span> Not protected — eligible for triage.</div>${extra ? `<div class="meta">${extra}</div>` : ""}`;
   }
 });
 
@@ -838,24 +661,22 @@ $("previewBtn").addEventListener("click", async () => {
     provider: $("provider").value, query: $("query").value, limit: parseInt($("limit").value, 10) || 50,
   });
   btn.disabled = false;
-  if (status === 503 || !ok || !data) {
-    const fallback = localPreviewResult();
-    out.innerHTML = `
-      <div class="notice warn">Static share mode. The receipt below is a sample.</div>
-      <div class="receipt">${escapeHtml(fallback.receipt || "")}</div>
-      <table>
-        <tr><th>Disposition</th><th>Count</th></tr>
-        <tr><td>Stays</td><td class="held">${fallback.audit.protected_held}</td></tr>
-        <tr><td>Can move after approval</td><td>${fallback.audit.archived}</td></tr>
-        <tr><td>Moved</td><td>${fallback.audit.moved}</td></tr>
-        <tr><td>Labeled</td><td>${fallback.audit.labeled}</td></tr>
-        <tr><td>Kept</td><td>${fallback.audit.kept}</td></tr>
-        <tr><td>Changed</td><td class="violations-ok">0</td></tr>
-      </table>`;
-    return;
-  }
   if (status === 500 && data && /SAFETY GATE/.test(data.detail || "")) {
     out.innerHTML = `<div class="notice err">${escapeHtml(data.detail)}</div>`; return;
+  }
+  if (status === 0) {
+    out.innerHTML = `<div class="notice err">Cannot reach the API. Serve this page from the FastAPI app or the Worker demo.</div>`;
+    return;
+  }
+  if (status === 503) {
+    const detail = data && data.detail ? escapeHtml(data.detail) : "provider is not available";
+    out.innerHTML = `<div class="notice warn">${detail}. Connect provider credentials on the server, then run the preview again.</div>`;
+    return;
+  }
+  if (!ok || !data) {
+    const detail = data && data.detail ? ` ${escapeHtml(data.detail)}` : "";
+    out.innerHTML = `<div class="notice err">Preview failed (${status}).${detail}</div>`;
+    return;
   }
   const a = data.audit || {};
   const viol = (a.violations || []).length;
@@ -863,12 +684,12 @@ $("previewBtn").addEventListener("click", async () => {
     <div class="receipt">${escapeHtml(data.receipt || "")}</div>
     <table>
       <tr><th>Disposition</th><th>Count</th></tr>
-      <tr><td>Stays</td><td class="held">${a.protected_held ?? 0}</td></tr>
-      <tr><td>Can move after approval</td><td>${a.archived ?? 0}</td></tr>
+      <tr><td>Protected — held in inbox</td><td class="held">${a.protected_held ?? 0}</td></tr>
+      <tr><td>Archived</td><td>${a.archived ?? 0}</td></tr>
       <tr><td>Moved</td><td>${a.moved ?? 0}</td></tr>
       <tr><td>Labeled</td><td>${a.labeled ?? 0}</td></tr>
       <tr><td>Kept</td><td>${a.kept ?? 0}</td></tr>
-      <tr><td>Safety violations</td><td class="${viol ? 'violations-bad' : 'violations-ok'}">${viol ? viol + ' ⚠️' : '0'}</td></tr>
+      <tr><td>Gate violations</td><td class="${viol ? 'violations-bad' : 'violations-ok'}">${viol ? viol + ' ⚠️' : '0 — gate held'}</td></tr>
     </table>`;
 });
 
@@ -887,10 +708,14 @@ async function startCheckout(planId, btn) {
   const { ok, status, data } = await postJSON("/v1/billing/checkout", { plan: planId, email });
   if (ok && data && data.url) { window.location.href = data.url; return; }
   btn.disabled = false; btn.textContent = prev;
-  if (status === 503) {
-    msg.innerHTML = `<div class="notice warn">Billing is not live here. The audit preview is.</div>`;
+  if (status === 0) {
+    msg.innerHTML = `<div class="notice err">Cannot reach the billing API from this page.</div>`;
+  } else if (status === 503) {
+    const detail = data && data.detail ? escapeHtml(data.detail) : "billing is not configured";
+    msg.innerHTML = `<div class="notice warn">${detail}. Stripe keys need to be configured before checkout can redirect.</div>`;
   } else {
-    msg.innerHTML = `<div class="notice err">Couldn't start checkout (${status}). Try again shortly.</div>`;
+    const detail = data && data.detail ? ` ${escapeHtml(data.detail)}` : "";
+    msg.innerHTML = `<div class="notice err">Couldn't start checkout (${status}).${detail}</div>`;
   }
 }
 
@@ -915,11 +740,11 @@ async function startCheckout(planId, btn) {
         <ul>
           <li>${escapeHtml(cap)}</li>
           <li>Providers: ${escapeHtml(p.providers || "—")}</li>
-          <li>Dry run &amp; receipt</li>
+          <li>Protected-sender gate &amp; signed receipts</li>
         </ul>`;
       const btn = document.createElement("button");
       btn.className = "btn " + (buyable ? "btn-buy" : "btn-free");
-      btn.textContent = buyable ? `Get ${escapeHtml(p.name || p.id)}` : "Start free";
+      btn.textContent = buyable ? `Get ${p.name || p.id}` : "Start free";
       if (buyable) {
         btn.addEventListener("click", () => startCheckout(p.id, btn));
       } else {
@@ -931,7 +756,7 @@ async function startCheckout(planId, btn) {
     if (!plans.length) out.innerHTML = `<p class="meta">No plans available right now.</p>`;
   } catch (e) {
     const plans = localPlans();
-    out.innerHTML = "";
+    out.innerHTML = `<div class="notice warn" style="grid-column:1/-1">Cannot reach the pricing API. Plan details below are local catalog copy; checkout is unavailable until a backend is connected.</div>`;
     plans.forEach((p) => {
       const cap = p.monthly_run_cap == null ? "Unlimited runs" : `${Number(p.monthly_run_cap).toLocaleString()} runs / mo`;
       const feature = p.id === "pro" ? " feature" : "";
@@ -945,14 +770,14 @@ async function startCheckout(planId, btn) {
         <ul>
           <li>${escapeHtml(cap)}</li>
           <li>Providers: ${escapeHtml(p.providers || "—")}</li>
-          <li>Dry run &amp; receipt</li>
+          <li>Protected-sender gate &amp; signed receipts</li>
         </ul>`;
       const btn = document.createElement("button");
       btn.className = "btn " + (buyable ? "btn-buy" : "btn-free");
-      btn.textContent = buyable ? `Get ${escapeHtml(p.name || p.id)}` : "Start free";
+      btn.textContent = buyable ? `Get ${p.name || p.id}` : "Start free";
       if (buyable) {
         btn.addEventListener("click", () => {
-          $("billingMsg").innerHTML = `<div class="notice warn">Static share. Checkout needs the backend.</div>`;
+          $("billingMsg").innerHTML = `<div class="notice warn">Cannot reach the billing API. Connect a backend before starting checkout.</div>`;
           $("email").focus();
         });
       } else {
@@ -970,8 +795,8 @@ async function startCheckout(planId, btn) {
   const b = q.get("billing");
   if (!b) return;
   const msg = $("billingMsg");
-  if (msg && b === "success") msg.innerHTML = `<div class="notice ok">Subscription active. Receipts retained.</div>`;
-  if (msg && b === "cancel") msg.innerHTML = `<div class="notice warn">Checkout canceled. No charge.</div>`;
+  if (msg && b === "success") msg.innerHTML = `<div class="notice ok">✓ Subscription active — welcome aboard. Your receipts are now retained.</div>`;
+  if (msg && b === "cancel") msg.innerHTML = `<div class="notice warn">Checkout canceled — no charge made.</div>`;
   if (b) document.getElementById("pricing").scrollIntoView();
 })();
 </script>

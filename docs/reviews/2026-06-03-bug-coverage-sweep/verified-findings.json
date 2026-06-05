@@ -6852,7 +6852,7 @@
     "verdict": "confirmed",
     "adjusted_severity": "info",
     "corroborated": false,
-    "evidence": "git check-ignore -v returns '.gitignore:8:config/protected_senders.local.txt' (matched). git ls-files returns empty (untracked). git log --all -- config/protected_senders.local.txt returns empty (never in history). File contains real PII: longofirm.com (legal), robinhood.com/acorns.com/chime.com/chase.com/stripe.com/alerts.santander.us (financial), nysenate.gov/studentaid.gov/ssa.gov/irs.gov (gov), and 'self: padavano.anthony'. Loader core/rules.py:583 def _load_local_protected() reads ./config/protected_senders.local.txt; invoked at line 616 (_local_domains, _local_selfs = _load_local_protected()). 35 domains + 1 self parse cleanly.",
+    "evidence": "git check-ignore -v returns '.gitignore:8:config/protected_senders.local.txt' (matched). git ls-files returns empty (untracked). git log --all -- config/protected_senders.local.txt returns empty (never in history). File contains real protected-sender PII across legal, financial, government, and self-mailbox entries; specific values redacted for public review artifact safety. Loader core/rules.py:583 def _load_local_protected() reads ./config/protected_senders.local.txt; invoked at line 616 (_local_domains, _local_selfs = _load_local_protected()). 35 domains + 1 self parse cleanly.",
     "rationale": "Positive privacy verification: PII-bearing local file is correctly gitignored, untracked, and absent from all history; loader reads it as designed. No leak."
    },
    "member_ids": [
@@ -25302,7 +25302,7 @@
    "rounds": [
     "R3"
    ],
-   "evidence": "git check-ignore -v returns '.gitignore:8:config/protected_senders.local.txt' (matched). git ls-files returns empty (untracked). git log --all -- config/protected_senders.local.txt returns empty (never in history). File contains real PII: longofirm.com (legal), robinhood.com/acorns.com/chime.com/chase.com/stripe.com/alerts.santander.us (financial), nysenate.gov/studentaid.gov/ssa.gov/irs.gov (gov), and 'self: padavano.anthony'. Loader core/rules.py:583 def _load_local_protected() reads ./config/protected_senders.local.txt; invoked at line 616 (_local_domains, _local_selfs = _load_local_protected()). 35 domains + 1 self parse cleanly.",
+   "evidence": "git check-ignore -v returns '.gitignore:8:config/protected_senders.local.txt' (matched). git ls-files returns empty (untracked). git log --all -- config/protected_senders.local.txt returns empty (never in history). File contains real protected-sender PII across legal, financial, government, and self-mailbox entries; specific values redacted for public review artifact safety. Loader core/rules.py:583 def _load_local_protected() reads ./config/protected_senders.local.txt; invoked at line 616 (_local_domains, _local_selfs = _load_local_protected()). 35 domains + 1 self parse cleanly.",
    "rationale": "Positive privacy verification: PII-bearing local file is correctly gitignored, untracked, and absent from all history; loader reads it as designed. No leak."
   },
   {

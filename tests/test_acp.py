@@ -11,13 +11,30 @@ from api.store import get_store
 client = TestClient(app)
 
 
+def _account_key(key):
+    if get_store().get_account_by_api_key(key) is None:
+        get_store().create_account(api_key=key)  # allow-secret: test fixture key
+    return key
+
+
 def _headers(idempotent=True, version=API_VERSION, auth="Bearer testkey"):
     h = {"API-Version": version}
     if auth:
+        if auth.startswith("Bearer "):
+            _account_key(auth[len("Bearer "):])
         h["Authorization"] = auth
     if idempotent:
         h["Idempotency-Key"] = str(uuid.uuid4())
     return h
+
+
+def _fixed_headers(key="testkey", idem="fixed-idempotency-key"):
+    _account_key(key)
+    return {
+        "API-Version": API_VERSION,
+        "Authorization": f"Bearer {key}",
+        "Idempotency-Key": idem,
+    }
 
 
 class _OKPay(payment.PaymentClient):
@@ -39,6 +56,22 @@ def test_gate_missing_auth():
     r = client.post("/acp/checkout_sessions", json={"items": []},
                     headers=_headers(auth=None))
     assert r.status_code == 401
+
+
+def test_gate_rejects_unknown_bearer_without_creating_account():
+    r = client.post(
+        "/acp/checkout_sessions",
+        json={"items": [{"id": "pack_100"}]},
+        headers={
+            "API-Version": API_VERSION,
+            "Authorization": "Bearer unknown-agent-key",
+            "Idempotency-Key": str(uuid.uuid4()),
+        },
+    )
+
+    assert r.status_code == 401
+    assert r.json()["code"] == "unauthorized"
+    assert get_store().get_account_by_api_key("unknown-agent-key") is None
 
 
 def test_gate_missing_idempotency_key():
@@ -90,6 +123,36 @@ def test_idempotency_conflict_same_key_different_body():
     assert r.json()["code"] == "idempotency_conflict"
 
 
+def test_same_idempotency_key_can_be_reused_across_endpoint_scopes():
+    h = _fixed_headers(idem="same-key")
+    created = client.post("/acp/checkout_sessions",
+                          json={"items": [{"id": "pack_100"}]}, headers=h)
+    assert created.status_code == 200
+    sid = created.json()["id"]
+
+    # Same caller key on a different endpoint scope must not replay the create
+    # response or conflict against it.
+    canceled = client.post(f"/acp/checkout_sessions/{sid}/cancel", json={},
+                           headers=h)
+    assert canceled.status_code == 200
+    assert canceled.json()["id"] == sid
+    assert canceled.json()["status"] == "canceled"
+
+
+def test_idempotency_keys_are_isolated_by_bearer_identity():
+    h1 = _fixed_headers(key="agent_one", idem="shared-key")
+    h2 = _fixed_headers(key="agent_two", idem="shared-key")
+
+    r1 = client.post("/acp/checkout_sessions",
+                     json={"items": [{"id": "pack_100"}]}, headers=h1)
+    r2 = client.post("/acp/checkout_sessions",
+                     json={"items": [{"id": "pack_100"}]}, headers=h2)
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r1.json()["id"] != r2.json()["id"]
+
+
 # -- retrieve ---------------------------------------------------------------
 def test_get_session_and_404():
     r = client.post("/acp/checkout_sessions", json={"items": [{"id": "pack_100"}]},
@@ -100,6 +163,26 @@ def test_get_session_and_404():
     missing = client.get("/acp/checkout_sessions/acp_cs_nope",
                          headers=_headers(idempotent=False))
     assert missing.status_code == 404
+
+
+def test_session_access_is_bound_to_bearer_identity():
+    owner = _fixed_headers(key="owner")
+    intruder = _fixed_headers(key="intruder")
+    sid = client.post("/acp/checkout_sessions",
+                      json={"items": [{"id": "pack_100"}]},
+                      headers=owner).json()["id"]
+
+    got = client.get(f"/acp/checkout_sessions/{sid}",
+                     headers=_fixed_headers(key="intruder"))
+    updated = client.post(f"/acp/checkout_sessions/{sid}",
+                          json={"items": [{"id": "pack_1000"}]},
+                          headers=intruder)
+    canceled = client.post(f"/acp/checkout_sessions/{sid}/cancel", json={},
+                           headers=intruder)
+
+    assert got.status_code == 404
+    assert updated.status_code == 404
+    assert canceled.status_code == 404
 
 
 # -- complete ---------------------------------------------------------------
@@ -165,7 +248,7 @@ def test_complete_after_orphan_fulfillment_recovers_order():
                       headers=_headers()).json()["id"]
 
     store = get_store()
-    acct = store.create_account(api_key="testkey", plan="free")  # allow-secret: synthetic test key
+    acct = store.get_account_by_api_key("testkey")
     assert store.fulfill_once(sid, acct["id"], 100) is True
 
     r = client.post(f"/acp/checkout_sessions/{sid}/complete",
@@ -433,7 +516,7 @@ def test_complete_by_a_different_bearer_is_rejected():
     assert r.status_code == 403
     assert r.json()["code"] == "session_owner_mismatch"
     # The rejected attempt credited no one.
-    assert get_store().get_account_by_api_key("attacker-key") is None
+    assert get_store().get_account_by_api_key("attacker-key")["run_credits"] == 0
 
 
 def test_complete_credits_the_creator_bearer():
@@ -478,7 +561,7 @@ def test_complete_by_a_different_bearer_is_rejected():
     assert r.status_code == 403
     assert r.json()["code"] == "session_owner_mismatch"
     # The rejected attempt credited no one.
-    assert get_store().get_account_by_api_key("attacker-key") is None
+    assert get_store().get_account_by_api_key("attacker-key")["run_credits"] == 0
 
 
 def test_complete_credits_the_creator_bearer():

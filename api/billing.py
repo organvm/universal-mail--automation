@@ -117,6 +117,7 @@ def create_checkout(req: CheckoutRequest, request: Request) -> dict:
     # Ensure we have an account to tie the subscription to (the grant target).
     store = get_store()
     auth_account = authorized_account(request)
+    account_api_key = None  # allow-secret: response field name, not a literal secret
     if req.account_id:
         if auth_account is None:
             raise HTTPException(status_code=401, detail="missing bearer credentials")
@@ -128,6 +129,7 @@ def create_checkout(req: CheckoutRequest, request: Request) -> dict:
     else:
         account = store.create_account(email=req.email, plan="free")
         account_id = account["id"]
+        account_api_key = account["api_key"]  # allow-secret: generated credential
 
     client = _client()
     base = _base_url(request)
@@ -149,7 +151,10 @@ def create_checkout(req: CheckoutRequest, request: Request) -> dict:
     except Exception as e:  # Stripe API / network error
         logger.warning("stripe checkout create failed: %s", e, exc_info=True)
         raise HTTPException(status_code=502, detail="checkout could not be created")
-    return {"url": session.url, "session_id": session.id, "account_id": account_id}
+    response = {"url": session.url, "session_id": session.id, "account_id": account_id}
+    if account_api_key is not None:
+        response["account_api_key"] = account_api_key  # allow-secret: generated credential
+    return response
 
 
 @router.post("/v1/billing/portal")

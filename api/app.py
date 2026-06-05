@@ -121,6 +121,8 @@ def _run(
         )
     except triage_runtime.AccountRequired:
         raise HTTPException(status_code=401, detail="missing bearer credentials")
+    except metering.ProviderNotAllowed as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except metering.EntitlementExhausted as e:
         raise HTTPException(status_code=402, detail=str(e))
     except service.ProviderUnavailable as e:

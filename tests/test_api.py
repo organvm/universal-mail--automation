@@ -266,6 +266,39 @@ def test_live_triage_reserves_monthly_allowance(monkeypatch):
     assert r.json()["run_id"].startswith("run_")
 
 
+def test_live_triage_rejects_free_account_paid_only_provider(monkeypatch):
+    called = {"run": False}
+
+    def _run(**_kwargs):
+        called["run"] = True
+        return _clean_triage_result()
+
+    monkeypatch.setattr(service, "run_triage", _run)
+    acct = get_store().create_account(plan="free")
+
+    r = client.post(
+        "/v1/triage",
+        json={"provider": "outlook", "dry_run": False},
+        headers={"Authorization": f"Bearer {acct['api_key']}"},
+    )
+
+    assert r.status_code == 403
+    assert called["run"] is False
+
+
+def test_live_triage_allows_paid_account_all_providers(monkeypatch):
+    monkeypatch.setattr(service, "run_triage", lambda **_kwargs: _clean_triage_result())
+    acct = get_store().create_account(plan="pro")
+
+    r = client.post(
+        "/v1/triage",
+        json={"provider": "outlook", "dry_run": False},
+        headers={"Authorization": f"Bearer {acct['api_key']}"},
+    )
+
+    assert r.status_code == 200
+
+
 def test_live_triage_exhausted_entitlement_rejected_before_service(monkeypatch):
     called = {"run": False}
 

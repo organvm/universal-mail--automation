@@ -117,7 +117,27 @@ def test_checkout_authenticated_account_reuses_existing_account(monkeypatch):
 
     assert r.status_code == 200
     assert r.json()["account_id"] == acct["id"]
+    assert "account_api_key" not in r.json()
     assert fake.checkout_sessions.params["client_reference_id"] == acct["id"]
+
+
+def test_checkout_new_account_returns_generated_key(monkeypatch):
+    monkeypatch.setenv("STRIPE_PRICE_PRO", "price_pro_test")
+    fake = _Client()
+    monkeypatch.setattr(billing, "_client", lambda: fake)
+
+    r = client.post(
+        "/v1/billing/checkout",
+        json={"plan": "pro", "email": "buyer@example.test"},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["account_id"].startswith("acct_")
+    assert body["account_api_key"].startswith("uma_")
+    account = get_store().get_account(body["account_id"])
+    assert account["api_key"] == body["account_api_key"]
+    assert fake.checkout_sessions.params["client_reference_id"] == body["account_id"]
 
 
 def test_portal_requires_bearer_even_with_customer_id(monkeypatch):

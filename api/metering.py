@@ -14,6 +14,10 @@ class EntitlementExhausted(RuntimeError):
     """Raised when an account cannot reserve or buy another live run."""
 
 
+class ProviderNotAllowed(RuntimeError):
+    """Raised when the account plan does not include the requested provider."""
+
+
 def current_period_key(now: Optional[datetime] = None) -> str:
     dt = now or datetime.now(timezone.utc)
     return dt.strftime("%Y-%m")
@@ -40,7 +44,13 @@ class LiveRunReservation:
             store.refund_live_run(self.account_id, self.period)
 
 
-def reserve_live_run(account: dict) -> LiveRunReservation:
+def provider_allowed(entitlements: dict, provider: str) -> bool:
+    if entitlements.get("providers") == "all":
+        return True
+    return (provider or "gmail").lower() in {"gmail", "fake"}
+
+
+def reserve_live_run(account: dict, *, provider: str = "gmail") -> LiveRunReservation:
     """Reserve entitlement before a live mailbox mutation.
 
     Monthly plan allowance is used first. If the monthly cap is exhausted, a
@@ -50,6 +60,8 @@ def reserve_live_run(account: dict) -> LiveRunReservation:
     account_id = account["id"]
     period = current_period_key()
     entitlements = plans.entitlements_for(account)
+    if not provider_allowed(entitlements, provider):
+        raise ProviderNotAllowed("provider is not included in this plan")
 
     if store.reserve_live_run(account_id, period, entitlements["monthly_run_cap"]):
         return LiveRunReservation(

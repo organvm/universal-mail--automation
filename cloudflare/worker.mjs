@@ -233,7 +233,7 @@ function agentManifest(base) {
       },
       agentic_commerce: {
         spec_version: "2026-04-17",
-        checkout_url: `${base}/acp/checkout_sessions`,
+        checkout_url: null,
         product_feed: `${base}/acp/feed.json`,
       },
     },
@@ -279,7 +279,7 @@ function productFeed(base) {
   return {
     version: "2026-04-17",
     seller_name: "Universal Mail Automation",
-    checkout_url: `${base}/acp/checkout_sessions`,
+    checkout_url: null,
     products: packs.map(([itemId, title, runs, price]) => ({
       item_id: itemId,
       title,
@@ -292,7 +292,7 @@ function productFeed(base) {
       availability: "in_stock",
       is_digital: true,
       is_eligible_search: true,
-      is_eligible_checkout: true,
+      is_eligible_checkout: false,
       seller_name: "Universal Mail Automation",
       seller_url: base,
       target_countries: ["US"],

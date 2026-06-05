@@ -11,9 +11,17 @@ from api.store import get_store
 client = TestClient(app)
 
 
+def _account_key(key):
+    if get_store().get_account_by_api_key(key) is None:
+        get_store().create_account(api_key=key)  # allow-secret: test fixture key
+    return key
+
+
 def _headers(idempotent=True, version=API_VERSION, auth="Bearer testkey"):
     h = {"API-Version": version}
     if auth:
+        if auth.startswith("Bearer "):
+            _account_key(auth[len("Bearer "):])
         h["Authorization"] = auth
     if idempotent:
         h["Idempotency-Key"] = str(uuid.uuid4())
@@ -21,6 +29,7 @@ def _headers(idempotent=True, version=API_VERSION, auth="Bearer testkey"):
 
 
 def _fixed_headers(key="testkey", idem="fixed-idempotency-key"):
+    _account_key(key)
     return {
         "API-Version": API_VERSION,
         "Authorization": f"Bearer {key}",
@@ -47,6 +56,22 @@ def test_gate_missing_auth():
     r = client.post("/acp/checkout_sessions", json={"items": []},
                     headers=_headers(auth=None))
     assert r.status_code == 401
+
+
+def test_gate_rejects_unknown_bearer_without_creating_account():
+    r = client.post(
+        "/acp/checkout_sessions",
+        json={"items": [{"id": "pack_100"}]},
+        headers={
+            "API-Version": API_VERSION,
+            "Authorization": "Bearer unknown-agent-key",
+            "Idempotency-Key": str(uuid.uuid4()),
+        },
+    )
+
+    assert r.status_code == 401
+    assert r.json()["code"] == "unauthorized"
+    assert get_store().get_account_by_api_key("unknown-agent-key") is None
 
 
 def test_gate_missing_idempotency_key():

@@ -91,9 +91,12 @@ def _gate(request: Request, *, require_idempotency: bool) -> GateContext:
         if len(idem) > 255:
             raise ACPError(400, "invalid_idempotency_key",
                            "Idempotency-Key exceeds 255 chars", "Idempotency-Key")
-    account = get_store().get_or_create_account_by_api_key(
+    account = get_store().get_account_by_api_key(
         api_key  # allow-secret: var ref
     )
+    if account is None:
+        raise ACPError(401, "unauthorized", "invalid bearer credentials",
+                       "Authorization")
     return GateContext(
         api_key=api_key,  # allow-secret: var ref
         idempotency_key=idem,

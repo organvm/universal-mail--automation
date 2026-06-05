@@ -29,7 +29,7 @@ def run_triage_with_receipt(
 
     reservation = None
     if not dry_run and account is not None:
-        reservation = metering.reserve_live_run(account)
+        reservation = metering.reserve_live_run(account, provider=provider)
 
     try:
         result = service.run_triage(

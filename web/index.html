@@ -23,6 +23,9 @@
     --risk-soft: #fff2df;
     --ok: #0e7f62;
     --ok-soft: #e5f8f2;
+    --green: var(--ok);
+    --green-2: var(--accent-strong);
+    --green-soft: var(--ok-soft);
     --danger: #b42318;
     --danger-soft: #fde9e7;
     --shadow: 0 18px 50px rgba(17, 22, 28, .08);
@@ -1002,7 +1005,7 @@
           </details>
           <details class="agent-card">
             <summary><h3>Discovery</h3></summary>
-            <p><a href="/.well-known/agent.json">agent.json</a>, <a href="/llms.txt">llms.txt</a>, <a href="/server.json">server.json</a>.</p>
+          <p><a href="/.well-known/agent.json">agent.json</a>, <a href="/llms.txt">llms.txt</a>, <a href="/server.json">MCP registry</a>.</p>
           </details>
           <details class="agent-card">
             <summary><h3>Receipts</h3></summary>
@@ -1066,76 +1069,6 @@ const SAMPLE_PLANS = [
   },
 ];
 
-function localSenderCheck(sender) {
-  const value = String(sender || "").trim().toLowerCase();
-  const isProtected = !value || value.endsWith(".gov") || value.includes("chase.com") || value.includes("1password.com");
-  if (!value) {
-    return {
-      sender,
-      protected: true,
-      categorization: {
-        label: "Misc/Other",
-        tier: 4,
-        time_sensitive: false,
-        tier_config: { number: 4, name: "Reference", color: "green", folder: null, keep_in_inbox: false, star: false },
-        is_vip: false,
-        vip_note: "",
-      },
-    };
-  }
-  if (value.includes("courts.ca.gov")) {
-    return {
-      sender,
-      protected: true,
-      categorization: {
-        label: "Personal/Government",
-        tier: 1,
-        time_sensitive: true,
-        tier_config: { number: 1, name: "Critical", color: "red", folder: "Action/Critical", keep_in_inbox: true, star: true },
-        is_vip: false,
-        vip_note: "",
-      },
-    };
-  }
-  if (value.includes("chase.com")) {
-    return {
-      sender,
-      protected: true,
-      categorization: {
-        label: "Finance/Banking",
-        tier: 1,
-        time_sensitive: true,
-        tier_config: { number: 1, name: "Critical", color: "red", folder: "Action/Critical", keep_in_inbox: true, star: true },
-        is_vip: false,
-        vip_note: "",
-      },
-    };
-  }
-  return {
-    sender,
-    protected: isProtected,
-    categorization: {
-      label: value.includes("deal") || value.includes("news") ? "Marketing" : "Misc/Other",
-      tier: value.includes("deal") || value.includes("news") ? 3 : 4,
-      time_sensitive: false,
-      tier_config: { number: value.includes("deal") || value.includes("news") ? 3 : 4, name: value.includes("deal") || value.includes("news") ? "Delegate" : "Reference", color: "amber", folder: null, keep_in_inbox: false, star: false },
-      is_vip: false,
-      vip_note: "",
-    },
-  };
-}
-
-function localPreviewResult() {
-  return {
-    dry_run: true,
-    provider: $("provider").value,
-    receipt: "Triage receipt: 3 message(s) - 2 protected held in inbox, 1 would leave inbox, 0 labeled-inbox, 0 kept.",
-    audit: { total: 3, protected_held: 2, archived: 1, moved: 0, labeled: 0, kept: 0, violations: [] },
-    processed: { processed_count: 1, success_count: 1, error_count: 0, label_counts: { Marketing: 1 }, errors: [] },
-    run_id: "demo_local_preview",
-  };
-}
-
 async function postJSON(path, body) {
   try {
     const r = await fetch(API_BASE + path, {
@@ -1165,8 +1098,11 @@ $("checkBtn").addEventListener("click", async () => {
   out.innerHTML = '<p class="meta">Checking...</p>';
   const { ok, status, data } = await postJSON("/v1/senders/check", { sender, subject: $("subject").value });
   btn.disabled = false;
-  const payload = ok && data ? data : localSenderCheck(sender);
-  if (!payload) { out.innerHTML = `<div class="notice err">Request failed (${status}).</div>`; return; }
+  if (!ok || !data) {
+    out.innerHTML = `<div class="notice err">Cannot reach the API (${status}).</div>`;
+    return;
+  }
+  const payload = data;
   const cat = payload.categorization || {};
   const tier = cat.tier != null ? `tier ${cat.tier}` : "";
   const label = cat.label ? `categorized as <strong>${escapeHtml(cat.label)}</strong>` : "";
@@ -1198,19 +1134,7 @@ $("previewBtn").addEventListener("click", async () => {
   });
   btn.disabled = false;
   if (status === 503 || !ok || !data) {
-    const fallback = localPreviewResult();
-    out.innerHTML = `
-      <div class="notice warn">Static mode. Showing sample proof.</div>
-      <div class="receipt">${escapeHtml(fallback.receipt || "")}</div>
-      <table>
-        <tr><th>Disposition</th><th>Count</th></tr>
-        <tr><td>Protected - held in inbox</td><td class="held">${fallback.audit.protected_held}</td></tr>
-        <tr><td>Archived</td><td>${fallback.audit.archived}</td></tr>
-        <tr><td>Moved</td><td>${fallback.audit.moved}</td></tr>
-        <tr><td>Labeled</td><td>${fallback.audit.labeled}</td></tr>
-        <tr><td>Kept</td><td>${fallback.audit.kept}</td></tr>
-        <tr><td>Gate violations</td><td class="violations-ok">0 - gate held</td></tr>
-      </table>`;
+    out.innerHTML = `<div class="notice err">Cannot reach the API (${status}).</div>`;
     return;
   }
   if (status === 500 && data && /SAFETY GATE/.test(data.detail || "")) {

@@ -33,6 +33,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api import plans
+from api.auth import authorized_account, require_authorized_account
 from api.store import get_store
 
 logger = logging.getLogger(__name__)
@@ -113,15 +114,25 @@ def create_checkout(req: CheckoutRequest, request: Request) -> dict:
         # The plan exists but its Stripe Price id env var isn't set on this host.
         raise HTTPException(status_code=503, detail="billing is not configured")
 
-    client = _client()
-    base = _base_url(request)
     # Ensure we have an account to tie the subscription to (the grant target).
     store = get_store()
-    account_id = req.account_id
-    if not account_id:
+    auth_account = authorized_account(request)
+    account_api_key = None  # allow-secret: response field name, not a literal secret
+    if req.account_id:
+        if auth_account is None:
+            raise HTTPException(status_code=401, detail="missing bearer credentials")
+        if auth_account["id"] != req.account_id:
+            raise HTTPException(status_code=403, detail="account mismatch")
+        account_id = req.account_id
+    elif auth_account is not None:
+        account_id = auth_account["id"]
+    else:
         account = store.create_account(email=req.email, plan="free")
         account_id = account["id"]
+        account_api_key = account["api_key"]  # allow-secret: generated credential
 
+    client = _client()
+    base = _base_url(request)
     params = {
         "mode": "subscription",
         "line_items": [{"price": price_id, "quantity": 1}],
@@ -140,16 +151,22 @@ def create_checkout(req: CheckoutRequest, request: Request) -> dict:
     except Exception as e:  # Stripe API / network error
         logger.warning("stripe checkout create failed: %s", e, exc_info=True)
         raise HTTPException(status_code=502, detail="checkout could not be created")
-    return {"url": session.url, "session_id": session.id, "account_id": account_id}
+    response = {"url": session.url, "session_id": session.id, "account_id": account_id}
+    if account_api_key is not None:
+        response["account_api_key"] = account_api_key  # allow-secret: generated credential
+    return response
 
 
 @router.post("/v1/billing/portal")
 def create_portal(req: PortalRequest, request: Request) -> dict:
     """Open the Stripe Customer Portal so a customer can self-serve their plan."""
-    customer_id = req.customer_id
-    if not customer_id and req.account_id:
-        account = get_store().get_account(req.account_id)
-        customer_id = account.get("stripe_customer_id") if account else None
+    account = require_authorized_account(request)
+    if req.account_id and req.account_id != account["id"]:
+        raise HTTPException(status_code=403, detail="account mismatch")
+
+    customer_id = account.get("stripe_customer_id")
+    if req.customer_id and req.customer_id != customer_id:
+        raise HTTPException(status_code=403, detail="customer mismatch")
     if not customer_id:
         raise HTTPException(status_code=404, detail="no Stripe customer for account")
 
@@ -206,17 +223,16 @@ async def webhook(request: Request) -> dict:
 
 # -- webhook event handling -------------------------------------------------
 def _resolve_account(account_id: Optional[str], customer_id: Optional[str]) -> str:
-    """Find (or create) the account this event applies to, preferring the explicit
-    metadata account_id, then the Stripe customer mapping, else a new account."""
-    store = get_store()
-    if account_id and store.get_account(account_id):
-        return account_id
-    if customer_id:
-        acct = store.get_account_by_customer(customer_id)
-        if acct:
-            return acct["id"]
-    created = store.create_account(account_id=account_id, plan="free")
-    return created["id"]
+    """Find or create the account this event applies to.
+
+    The Stripe customer id is the durable billing identity. It wins over stale or
+    conflicting metadata account_id values, and new customer mappings are claimed
+    atomically in the store so concurrent webhook deliveries deduplicate cleanly.
+    """
+    account = get_store().get_or_create_account_for_customer(
+        customer_id, account_id=account_id, plan="free"
+    )
+    return account["id"]
 
 
 def _handle_event(event_type: str, obj: dict) -> None:

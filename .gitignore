@@ -34,4 +34,5 @@ venv/
 
 # Local agent/session state — contains transcripts, prompts, and private context.
 .claude/sessions/
+.claude/worktrees/
 .serena/

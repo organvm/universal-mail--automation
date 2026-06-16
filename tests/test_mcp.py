@@ -167,7 +167,7 @@ def test_live_triage_uses_mcp_account_entitlement(monkeypatch):
     result = triage(dry_run=False, provider="fake", account_api_key=acct["api_key"])
 
     assert result.run_id.startswith("run_")
-    assert result.packet["schema"] == "uma.intake.packet.v1"
+    assert result.packet.schema == "uma.intake.packet.v1"
     assert store.get_usage_count(acct["id"], metering.current_period_key()) == 1
 
 

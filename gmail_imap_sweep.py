@@ -9,10 +9,9 @@ X-GM-LABELS extension lets us drop the ``\\Inbox`` label, a TRUE archive that st
 (providers/imap.py::archive -> remove_label(uid, "\\Inbox"), success only on a server OK).
 
 This reuses the EXACT SAME classifier as inbox_sweep.py (core.rules + decide), so the
-fail-closed protected-sender gate and the local allowlist
-(config/protected_senders.local.txt: lemonsqueezy/santander/accessgrantedsystems/givingdata)
-hold identically — the dry-run classification already verified on the Apple-Mail path
-carries over unchanged.
+fail-closed protected-sender gate and the operator's local never-archive allowlist
+(config/protected_senders.local.txt, gitignored) hold identically — the dry-run
+classification already verified on the Apple-Mail path carries over unchanged.
 
 Reversible: archive drops ONLY the INBOX label; every thread stays in All Mail, and the
 JSON receipt records uid/sender/subject of everything touched = the exact undo manifest.
@@ -59,13 +58,16 @@ def classify(provider, mailbox, limit):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Gmail IMAP sweep — archive noise by dropping the INBOX label (dry run by default).")
-    ap.add_argument("--user", default=os.getenv("IMAP_USER", "padavano.anthony@gmail.com"))
+    ap.add_argument("--user", default=os.getenv("IMAP_USER"),
+                    help="mailbox address (or set IMAP_USER); no default — names are not hardcoded")
     ap.add_argument("--limit", type=int, default=400)
     ap.add_argument("--mailbox", default="INBOX")
     ap.add_argument("--apply", action="store_true",
                     help="actually flag/archive (default: dry run, no changes)")
     ap.add_argument("--receipt", default=None, help="path to write the JSON receipt / undo manifest")
     args = ap.parse_args(argv)
+    if not args.user:
+        ap.error("no mailbox configured — set IMAP_USER or pass --user <address>")
 
     provider = IMAPProvider(user=args.user, use_gmail_extensions=True)
     provider.connect()

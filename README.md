@@ -469,7 +469,7 @@ See [api/README.md](api/README.md) for HTTP examples and
 
 ## CLI Reference
 
-The CLI (`cli.py`) is built on `argparse` and provides six subcommands, each accepting a `--provider` flag to target a specific email service.
+The CLI (`cli.py`, installed as `umail`) is built on `argparse` and provides eight subcommands — `label`, `report`, `health`, `escalate`, `summary`, `pending`, `vip`, and `triage` — each accepting a shared `--provider {gmail,imap,mailapp,outlook}` flag (default `gmail`) to target a specific email service. Global flags `-v/--verbose` and `--version` apply to every subcommand.
 
 ### Labeling Commands
 
@@ -493,6 +493,21 @@ python3 cli.py label --provider gmail --query "label:Misc/Other" --remove-label 
 python3 cli.py label --provider outlook --dry-run
 ```
 
+`label` flags (defaults from `argparse`):
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--query`, `-q` | `has:nouserlabels` | Provider query selecting messages to process |
+| `--limit`, `-l` | `1000` | Max messages per run (reduced to the free cap when unlicensed) |
+| `--dry-run`, `-n` | off | Preview decisions; apply nothing and write no receipt |
+| `--remove-label` | none | Remove this label when a new category is assigned |
+| `--state-file` | none | JSON state file for crash-recovery / resumption |
+| `--tier-routing` | off | Eisenhower routing: categories + `Action/*` folders |
+| `--vip-only` | off | Only process messages from configured VIP senders |
+| `--audit-file` | `audit/<provider>-triage.jsonl` | Append-only trust receipt path |
+| `--no-audit` | off | Disable the receipt (not recommended for apply runs) |
+| `--redact-audit` | off | Record sender domain only — produces a shareable receipt |
+
 ### Reporting Commands
 
 ```bash
@@ -511,6 +526,17 @@ python3 cli.py escalate --provider outlook --dry-run
 # Re-triage and apply escalations
 python3 cli.py escalate --provider gmail
 ```
+
+Flags and defaults for the reporting commands:
+
+| Command | Flags (default) |
+|---------|-----------------|
+| `summary` | `--query` (`""`), `--limit` (`500`), `--format {table,markdown,json}` (`table`) |
+| `pending` | `--limit` (`100`), `--format {table,markdown,json}` (`table`) — no `--query` |
+| `vip` | `--query` (`""`), `--limit` (`500`), `--format {table,markdown,json}` (`table`) |
+| `escalate` | `--query` (`""`), `--limit` (`500`), `--dry-run`, `--audit-file` (`audit/<provider>-escalate.jsonl`), `--no-audit`, `--redact-audit` |
+| `report` | shared `--provider` flags only (Gmail returns live label counts; other providers report `N/A`) |
+| `health` | shared `--provider` flags only |
 
 ### Triage Commands
 
@@ -533,13 +559,28 @@ python3 cli.py triage --provider gmail --draft \
 python3 cli.py triage --provider outlook --format json --limit 100
 ```
 
+`triage` flags (defaults from `argparse`):
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--query`, `-q` | `""` | Provider query selecting messages to triage |
+| `--limit`, `-l` | `200` | Max messages to research and score |
+| `--top`, `-t` | `0` (all) | Keep only the top N highest-priority items |
+| `--format`, `-f` | `text` | Output format: `text`, `markdown`, or `json` |
+| `--draft` | off | Generate voice-matched reply drafts for items needing a response |
+| `--voice-file` | `~/.config/mail_automation/voice.json` | Saved voice profile JSON |
+| `--samples-file` | `~/.config/mail_automation/sent_samples.txt` | Sent-mail corpus to learn voice from |
+| `--name` | none | Name used in the draft signature |
+
+`--draft`, `--voice-file`, `--samples-file`, and `--name` are inert without `--draft`; drafting runs fully offline (no LLM call).
+
 ### Health and Diagnostics
 
 ```bash
 # Provider health check (verifies connection and credentials)
 python3 cli.py health --provider gmail
 
-# Full diagnostic report
+# Per-label message counts (live counts on Gmail; N/A on other providers)
 python3 cli.py report --provider outlook
 ```
 

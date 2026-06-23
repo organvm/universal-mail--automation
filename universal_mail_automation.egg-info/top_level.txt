@@ -1,0 +1,9 @@
+api
+auth
+cli
+core
+gmail_auth
+gmail_labeler
+imap_rules
+mcp_server
+providers

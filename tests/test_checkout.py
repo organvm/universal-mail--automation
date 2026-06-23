@@ -1,8 +1,7 @@
-"""Tests for the license-issued webhook receiver (platform/checkout.py).
+"""Tests for the license-issued webhook receiver (licensing/checkout.py).
 
-The receiver is loaded by file path rather than ``import platform.checkout`` so
-the test never binds the local ``platform`` package over Python's stdlib
-``platform`` module for the rest of the process.
+The receiver is loaded by file path rather than ``import licensing.checkout`` so
+the test never pollutes the namespace with a local ``licensing`` package.
 
 Coverage: constant-time signature verification, atomic 0600 license write, and
 the fail-closed route contract (503 unconfigured, 400 unverified/unparseable with
@@ -24,9 +23,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 _HERE = Path(__file__).resolve().parent
-_MODULE_PATH = _HERE.parent / "platform" / "checkout.py"
+_MODULE_PATH = _HERE.parent / "licensing" / "checkout.py"
 
-_spec = importlib.util.spec_from_file_location("platform_checkout", _MODULE_PATH)
+_spec = importlib.util.spec_from_file_location("licensing_checkout", _MODULE_PATH)
 checkout = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(checkout)
 

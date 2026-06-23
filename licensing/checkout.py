@@ -1,4 +1,4 @@
-"""platform/checkout.py — the ``license-issued`` webhook receiver.
+"""licensing/checkout.py — the ``license-issued`` webhook receiver.
 
 Pairs with ``core/license.py``: the checkout platform (the storefront that sells
 seats) POSTs a signed ``license-issued`` event here the moment a purchase clears.
@@ -23,7 +23,7 @@ is tolerated. Verification is constant-time.
 
 Mount on any FastAPI app::
 
-    from platform import checkout
+    from licensing import checkout
     app.include_router(checkout.router)
 """
 

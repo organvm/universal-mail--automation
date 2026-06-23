@@ -1,0 +1,143 @@
+name: Deploy
+
+# Build the production container image, smoke-test it, and publish it to the
+# GitHub Container Registry (GHCR). The published image is the canonical, runnable
+# deploy artifact — any container host (Render, Fly, Cloud Run, a plain VM) can pull
+# and run it, and the one-command `scripts/deploy.sh` uses the same Dockerfile.
+#
+# This is intentionally separate from ci.yml's `cloudflare-share-deploy` job, which
+# only ships the read-only demo Worker. This workflow ships the real FastAPI app.
+#
+# Triggers:
+#   - push of a v* tag (e.g. v0.2.0)  → build, smoke-test, publish :vX.Y.Z + :latest
+#   - push to main                     → build, smoke-test, publish :edge + :sha
+#   - workflow_dispatch                → build + smoke-test; publish only if push=true
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Publish the image to GHCR (otherwise build + smoke-test only)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  image:
+    name: Build, smoke-test & publish image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,format=short
+
+      # Build once, load into the local Docker daemon so we can run it.
+      - name: Build image (load for testing)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: mail-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the container
+        run: |
+          set -euo pipefail
+          docker run -d --name mail-api -p 8000:8000 mail-api:ci
+          # Wait for the app to come up (no credentials needed for these endpoints).
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "::error::container did not become healthy" >&2
+              docker logs mail-api || true
+              exit 1
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/health | grep -q '"status":"ok"'
+          curl -fsS http://127.0.0.1:8000/v1/billing/plans | grep -q '"plans"'
+          curl -fsS -H 'content-type: application/json' \
+            -d '{"sender":"clerk@courts.ca.gov"}' \
+            http://127.0.0.1:8000/v1/senders/check | grep -q '"protected":true'
+          curl -fsS http://127.0.0.1:8000/app/ >/dev/null
+          echo "Smoke test passed."
+          docker rm -f mail-api >/dev/null 2>&1 || true
+
+      - name: Decide whether to publish
+        id: publish
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "do=${{ inputs.push }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "do=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        if: steps.publish.outputs.do == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Re-export from the buildx cache (instant) and push the derived tags.
+      - name: Publish image to GHCR
+        if: steps.publish.outputs.do == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy image"
+            echo
+            if [ "${{ steps.publish.outputs.do }}" = "true" ]; then
+              echo "Published:"
+              echo '```'
+              echo "${{ steps.meta.outputs.tags }}"
+              echo '```'
+              echo "Pull & run:"
+              echo '```bash'
+              echo "docker run -p 8000:8000 --env-file prod.env ${IMAGE}:latest"
+              echo '```'
+            else
+              echo "Built and smoke-tested only (not published)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

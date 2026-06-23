@@ -9,6 +9,10 @@ time, so to avoid breaking them this ``__init__`` transparently re-exports the
 genuine standard-library module's public API. The project's SaaS REST entrypoint
 lives in :mod:`platform.saas_runner`.
 
+Currently it also includes :mod:`platform.checkout`, which receives the
+``license-issued`` webhook and persists the granted license for the local engine
+to read (see ``core/license.py``).
+
 The submodule is also importable directly from its file path (the test-suite
 loads it that way), which keeps it independent of import order between this
 package and the stdlib module.

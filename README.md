@@ -4,6 +4,13 @@
 
 # Universal Mail Automation
 
+> **The Expensive Problem:** Every team that automates its inbox is one bad rule away from a catastrophe — an auto-archived wire-transfer alert, a missed legal notice, a buried government deadline, a chargeback nobody saw. So the work stays manual: a salaried person triaging hundreds of messages a day, or a black-box filter no one can audit when something critical goes missing. The cost is paid in lost hours, lost money, and lost trust.
+>
+> Universal Mail Automation closes that gap with **provable restraint.** A fail-closed protected-sender gate never archives financial, legal, government, or platform mail, and an independent, signed audit receipt refuses to report success if a protected sender ever left the inbox — across Gmail, Outlook, iCloud, and macOS Mail.app, unified behind one CLI, one rules engine, and one MCP + agent-commerce surface. This is not a script. It is production-grade, end-to-end-tested infrastructure (29 test modules) you can put in front of a business that cannot afford to lose an email.
+>
+> [**Deploy this for your shop →**](mailto:padavano.anthony@gmail.com)  
+> *(If you are a technical recruiter or engineering leader, this repository is the proof-of-work — a single-author system spanning a multi-provider abstraction layer, a fail-closed safety gate with independent signed receipts, a metered billing API, and an MCP / agent-commerce stack. [Work with the team that built this →](mailto:padavano.anthony@gmail.com))*
+
 [![CI](https://github.com/organvm-iii-ergon/universal-mail--automation/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm-iii-ergon/universal-mail--automation/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-pending-lightgrey)](https://github.com/organvm-iii-ergon/universal-mail--automation)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/organvm-iii-ergon/universal-mail--automation/blob/main/LICENSE)

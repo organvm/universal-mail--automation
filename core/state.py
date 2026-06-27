@@ -9,10 +9,18 @@ import json
 import logging
 import os
 from collections import defaultdict
-from typing import Any, Dict, Optional
 from datetime import datetime
+from typing import DefaultDict, Dict, Optional, TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class _State(TypedDict, total=False):
+    next_page_token: Optional[str]
+    total_processed: int
+    history: Dict[str, int]
+    last_run: Optional[str]
+    provider: Optional[str]
 
 
 class StateManager:
@@ -43,7 +51,7 @@ class StateManager:
         self.filename = filename
         self.state = self._load()
 
-    def _load(self) -> Dict[str, Any]:
+    def _load(self) -> _State:
         """Load state from file, or return default state if not found."""
         if os.path.exists(self.filename):
             try:
@@ -55,7 +63,7 @@ class StateManager:
                 logger.error(f"Failed to load state file {self.filename}: {e}")
         return self._default_state()
 
-    def _default_state(self) -> Dict[str, Any]:
+    def _default_state(self) -> _State:
         """Return the default state structure."""
         return {
             "next_page_token": None,
@@ -102,7 +110,7 @@ class StateManager:
         """Get the total number of processed messages."""
         return self.state.get("total_processed", 0)
 
-    def get_history(self) -> defaultdict:
+    def get_history(self) -> DefaultDict[str, int]:
         """
         Get the label statistics history.
 

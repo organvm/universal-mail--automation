@@ -7,8 +7,10 @@ interface for consistent behavior with other providers.
 
 import logging
 import time
+from datetime import datetime
 from typing import Dict, List, Optional, Callable, Any, TYPE_CHECKING
 
+from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
 from providers.base import (
@@ -63,7 +65,7 @@ class GmailProvider(EmailProvider):
     def __init__(
         self,
         scopes: Optional[List[str]] = None,
-        service: Optional[Any] = None,
+        service: Optional[Resource] = None,
     ):
         """
         Initialize Gmail provider.
@@ -333,7 +335,7 @@ class GmailProvider(EmailProvider):
         """Archive a message (remove from INBOX)."""
         return self.remove_label(message_id, "INBOX")
 
-    def star(self, message_id: str, due_date: Any = None) -> bool:
+    def star(self, message_id: str, due_date: Optional[datetime] = None) -> bool:
         """Star a message. due_date is ignored (Gmail doesn't support it)."""
         return self.apply_label(message_id, "STARRED")
 

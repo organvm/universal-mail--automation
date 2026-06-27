@@ -10,8 +10,9 @@ import logging
 import os
 import ssl
 import subprocess
+from datetime import datetime
 from email.header import decode_header
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from providers.base import (
     EmailProvider,
@@ -390,7 +391,7 @@ class IMAPProvider(EmailProvider):
             logger.error(f"Failed to archive message: {e}")
             return False
 
-    def star(self, message_id: str, due_date: Any = None) -> bool:
+    def star(self, message_id: str, due_date: Optional[datetime] = None) -> bool:
         """Flag/star a message. due_date is ignored (IMAP doesn't support it)."""
         return self._checked_store(
             message_id, "+FLAGS", r"(\Flagged)", "star message")

@@ -22,6 +22,7 @@ Public API:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from dataclasses import dataclass, field
@@ -127,7 +128,7 @@ class VoiceProfile:
 
     @classmethod
     def from_dict(cls, data: dict) -> "VoiceProfile":
-        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        known = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: v for k, v in data.items() if k in known})
 
     # ---- styling ----------------------------------------------------------

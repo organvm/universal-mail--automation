@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.header import decode_header, make_header
 from email.utils import getaddresses, parseaddr
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple, TypedDict
 
 
 # ============================================================================
@@ -67,7 +67,17 @@ PRIORITY_TIERS: Dict[int, PriorityTier] = {
 # LABEL TAXONOMY - Comprehensive categorization rules
 # ============================================================================
 
-LABEL_RULES: Dict[str, Dict[str, Any]] = {
+class _LabelRuleRequired(TypedDict):
+    patterns: List[str]
+    priority: int
+
+
+class LabelRule(_LabelRuleRequired, total=False):
+    tier: int
+    time_sensitive: bool
+
+
+LABEL_RULES: Dict[str, LabelRule] = {
     # Development & Code
     "Dev/GitHub": {
         "patterns": [
@@ -779,7 +789,7 @@ def normalize_sender(raw_from: Optional[str]) -> Tuple[str, str, str]:
     return (display, email_, domain)
 
 
-def _iter_sender_domains(raw_from: str):
+def _iter_sender_domains(raw_from: str) -> Iterator[Tuple[str, str]]:
     """Yield (email, domain) for EVERY address in a (possibly multi-address) From,
     each relay/MIME/IDNA-decoded. The gate matches the UNION so a protected sender
     listed alongside others (e.g. 'Lawyer <a@firm>, Assistant <b@bulk>') can't

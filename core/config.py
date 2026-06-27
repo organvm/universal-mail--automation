@@ -102,7 +102,7 @@ class Config:
     extra_keep_in_inbox: List[str] = field(default_factory=list)
 
     # VIP senders configuration
-    vip_senders: Dict[str, Dict] = field(default_factory=dict)
+    vip_senders: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 def load_yaml_config(path: Path) -> Dict[str, Any]:

@@ -7,7 +7,8 @@ enabling consistent behavior across Gmail, IMAP, Mail.app, and Outlook.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Optional, Iterator, Dict, Any, Tuple, TYPE_CHECKING
+from datetime import datetime
+from typing import List, Optional, Iterator, Dict, Tuple, TYPE_CHECKING
 from enum import Flag, auto
 
 from core.models import EmailMessage, LabelAction, ProcessingResult
@@ -216,7 +217,7 @@ class EmailProvider(ABC):
         """
         return self.remove_label(message_id, "INBOX")
 
-    def star(self, message_id: str, due_date: Any = None) -> bool:
+    def star(self, message_id: str, due_date: Optional[datetime] = None) -> bool:
         """
         Star/flag a message for priority handling.
 

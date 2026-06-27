@@ -1,16 +1,25 @@
 import fs from 'fs/promises';
 import path from 'path';
 
+type LabelHistory = Record<string, number>;
+
+type LabelerState = {
+  history: LabelHistory;
+};
+
 export default async function Dashboard() {
-  let stats: any = { history: {} };
-  let error = null;
+  let stats: LabelerState = { history: {} };
+  let error: string | null = null;
 
   try {
     const statePath = path.join(process.cwd(), '../labeler_state.json');
     const content = await fs.readFile(statePath, 'utf8');
-    stats = JSON.parse(content);
-  } catch (err: any) {
-    error = err.message;
+    const parsed = JSON.parse(content) as Partial<LabelerState>;
+    stats = {
+      history: parsed.history ?? {},
+    };
+  } catch (err: unknown) {
+    error = err instanceof Error ? err.message : String(err);
   }
 
   // Pre-calculated mapping based on python core/rules.py
@@ -29,12 +38,13 @@ export default async function Dashboard() {
   
   const tierCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
   
-  if (stats && stats.history) {
-    for (const [label, count] of Object.entries(stats.history)) {
-      const tier = labelToTier[label] || 4; // Default to 4 if unknown
-      tierCounts[tier as keyof typeof tierCounts] += Number(count);
-    }
+  for (const [label, count] of Object.entries(stats.history)) {
+    const tier = labelToTier[label] || 4; // Default to 4 if unknown
+    tierCounts[tier as keyof typeof tierCounts] += Number(count);
   }
+
+  const labelEntries = Object.entries(stats.history)
+    .sort(([, leftCount], [, rightCount]) => rightCount - leftCount);
 
   return (
     <main className="min-h-screen p-8 bg-gray-50 text-gray-900 font-sans">
@@ -68,7 +78,7 @@ export default async function Dashboard() {
                 <h3 className="text-lg font-semibold text-gray-900">Label Distribution</h3>
               </div>
               <ul className="divide-y divide-gray-200">
-                {Object.entries(stats.history || {}).sort((a: any, b: any) => b[1] - a[1]).map(([label, count]: any) => (
+                {labelEntries.map(([label, count]) => (
                   <li key={label} className="px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
                     <span className="font-medium text-gray-700">{label}</span>
                     <span className="text-gray-900 font-semibold bg-gray-100 px-3 py-1 rounded-full text-sm">
@@ -76,7 +86,7 @@ export default async function Dashboard() {
                     </span>
                   </li>
                 ))}
-                {Object.keys(stats.history || {}).length === 0 && (
+                {labelEntries.length === 0 && (
                   <li className="px-6 py-8 text-center text-gray-500">No data available</li>
                 )}
               </ul>

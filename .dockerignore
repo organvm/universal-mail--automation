@@ -1,0 +1,42 @@
+.git
+.github
+.pytest_cache
+.ruff_cache
+.venv
+env
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.DS_Store
+
+# Local secrets, OAuth material, and operator state.
+credentials.json
+token.pickle
+client_secret_*.json
+prod.env
+config/protected_senders.local.txt
+data
+*.db
+*.db-wal
+*.db-shm
+
+# Logs, local mail exports, and generated private triage artifacts.
+*.log
+audit/*.jsonl
+*_state.json
+labeler_state.json
+mail_export.tsv
+mail_report.md
+
+# Frontend install/build outputs are regenerated outside the API image.
+web/node_modules
+web/.next
+web/out
+
+# Test/build byproducts.
+dist
+build
+*.egg-info
+coverage.xml
+htmlcov

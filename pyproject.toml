@@ -1,3 +1,113 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "universal-mail-automation"
+version = "0.2.0"
+description = "Multi-provider inbox triage across Gmail, Outlook, IMAP, and macOS Mail with a shared categorization engine, Eisenhower priority tiers, and fail-closed protected-sender audit receipts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "4444J99" }]
+keywords = [
+    "email",
+    "gmail",
+    "outlook",
+    "imap",
+    "automation",
+    "triage",
+    "inbox",
+    "labeling",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Email",
+    "Topic :: Office/Business",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "google-api-python-client>=2.197.0,<3",
+    "google-auth-httplib2>=0.4.0,<1",
+    "google-auth-oauthlib>=1.4.0,<2",
+]
+
+[project.optional-dependencies]
+outlook = [
+    "msal>=1.37.0,<2",
+    "requests>=2.34.2,<3",
+]
+yaml = ["pyyaml>=6.0.3,<7"]
+api = [
+    "fastapi>=0.137.1",
+    "uvicorn[standard]>=0.49.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.4",
+    "stripe>=15.2.1,<16",
+]
+mcp = [
+    "mcp>=1.27.2,<2",
+    "fastapi>=0.137.1",
+    "uvicorn[standard]>=0.49.0",
+    "pydantic>=2.13.4",
+]
+all = [
+    "msal>=1.37.0,<2",
+    "requests>=2.34.2,<3",
+    "pyyaml>=6.0.3,<7",
+    "fastapi>=0.137.1",
+    "uvicorn[standard]>=0.49.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.4",
+    "stripe>=15.2.1,<16",
+    "mcp>=1.27.2,<2",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "build",
+    "twine",
+]
+
+[project.scripts]
+umail = "cli:main"
+umail-mcp = "mcp_server.server:main"
+
+[project.urls]
+Homepage = "https://github.com/organvm/universal-mail--automation"
+Repository = "https://github.com/organvm/universal-mail--automation"
+Changelog = "https://github.com/organvm/universal-mail--automation/blob/main/CHANGELOG.md"
+"Live Demo" = "https://uma.4444j99.dev"
+
+[tool.setuptools]
+packages = [
+    "acp",
+    "api",
+    "auth",
+    "core",
+    "mcp_server",
+    "providers",
+]
+py-modules = [
+    "cli",
+    "gmail_auth",
+    "gmail_labeler",
+    "imap_rules",
+]
+include-package-data = true
+
+[tool.setuptools.package-data]
+core = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -23,6 +23,7 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from core.audit import AuditLog
 
+from core import __version__
 from core.rules import (
     LABEL_RULES,
     PRIORITY_LABELS,
@@ -1023,6 +1024,11 @@ Examples:
   %(prog)s health --provider gmail
   %(prog)s triage --provider gmail --top 20 --draft --name "Anthony"
         """,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
 
     # Global options

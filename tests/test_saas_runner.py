@@ -1,24 +1,8 @@
-"""Tests for platform/saas_runner.py — the tier-rate-limited SaaS entrypoint.
-
-The module is loaded by file path (not ``import platform.saas_runner``) because
-the top-level ``platform`` package shares its name with the stdlib module, and
-which one resolves for a dotted import depends on process import order. Loading
-by path is deterministic and order-independent.
-"""
-
-import importlib.util
-import os
-import sys
+"""Tests for uma_platform/saas_runner.py — the tier-rate-limited SaaS entrypoint."""
 
 import pytest
 
-# --- load platform/saas_runner.py by path, under a non-colliding module name --
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SAAS_PATH = os.path.join(_REPO_ROOT, "platform", "saas_runner.py")
-_spec = importlib.util.spec_from_file_location("umail_saas_runner", _SAAS_PATH)
-saas = importlib.util.module_from_spec(_spec)
-sys.modules["umail_saas_runner"] = saas
-_spec.loader.exec_module(saas)
+from uma_platform import saas_runner as saas
 
 from api import metering, service  # noqa: E402
 from core.models import EmailMessage  # noqa: E402

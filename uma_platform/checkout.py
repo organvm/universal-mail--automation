@@ -1,6 +1,6 @@
-"""platform/checkout.py — the ``license-issued`` webhook receiver.
+"""uma_platform/checkout.py — the ``license-issued`` webhook receiver.
 
-Pairs with ``core/license.py``: the checkout platform (the storefront that sells
+Pairs with ``core/license.py``: the checkout service (the storefront that sells
 seats) POSTs a signed ``license-issued`` event here the moment a purchase clears.
 This receiver verifies the signature and then writes the granted license to
 ``~/.config/mail_automation/license.json`` — the file ``core/license.py`` reads to
@@ -23,7 +23,7 @@ is tolerated. Verification is constant-time.
 
 Mount on any FastAPI app::
 
-    from platform import checkout
+    from uma_platform import checkout
     app.include_router(checkout.router)
 """
 

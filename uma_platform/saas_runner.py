@@ -1,4 +1,4 @@
-"""platform/saas_runner.py — multi-tenant SaaS REST entrypoint for mail triage.
+"""uma_platform/saas_runner.py — multi-tenant SaaS REST entrypoint for mail triage.
 
 A thin, self-contained hosting layer over the triage engine. A caller presents a
 ``(token, provider, query, license)`` tuple and the runner:
@@ -18,7 +18,7 @@ Two surfaces are exposed:
   any host or test.
 * ``router`` / ``app`` — a FastAPI router and a standalone ASGI app exposing
   ``POST /v1/saas/triage`` and ``GET /v1/saas/limits``. Serve standalone with
-  ``uvicorn platform.saas_runner:app`` or mount ``router`` into another app.
+  ``uvicorn uma_platform.saas_runner:app`` or mount ``router`` into another app.
 
 Rate limiting here is intentionally distinct from the monthly run *quota*
 enforced by :mod:`api.metering`: the quota bounds total monthly volume (a billing
@@ -32,7 +32,7 @@ from __future__ import annotations
 import os
 import sys
 
-# When executed as a bare script (``python platform/saas_runner.py``) the parent
+# When executed as a bare script (``python uma_platform/saas_runner.py``) the parent
 # repo root is not on sys.path, so the ``api`` / ``core`` packages would not
 # import. Add it defensively; harmless when already importable as a package.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -398,7 +398,7 @@ if _FASTAPI_AVAILABLE:
         """Per-tier rate limits + plan caps. Public; needs no credentials."""
         return tier_catalog()
 
-    # Standalone ASGI app: ``uvicorn platform.saas_runner:app``.
+    # Standalone ASGI app: ``uvicorn uma_platform.saas_runner:app``.
     try:
         from api import __version__ as _version
     except Exception:  # pragma: no cover

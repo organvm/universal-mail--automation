@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `platform/saas_runner.py`: multi-tenant SaaS REST entrypoint accepting
+- `uma_platform/saas_runner.py`: multi-tenant SaaS REST entrypoint accepting
   `(token, provider, query, license)`, applying a safety-gated triage and
   returning a JSON report. Adds a per-tier sliding-window request rate limiter
   (`TierRateLimiter`) keyed by token — distinct from the monthly volume quota in

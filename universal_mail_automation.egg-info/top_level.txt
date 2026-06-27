@@ -1,3 +1,4 @@
+acp
 api
 auth
 cli
@@ -7,3 +8,4 @@ gmail_labeler
 imap_rules
 mcp_server
 providers
+uma_platform

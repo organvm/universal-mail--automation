@@ -14,6 +14,11 @@ requirements-api.txt
 requirements-mcp.txt
 requirements.txt
 setup.py
+acp/__init__.py
+acp/feed.py
+acp/models.py
+acp/payment.py
+acp/router.py
 api/__init__.py
 api/app.py
 api/auth.py
@@ -34,11 +39,13 @@ core/audit.py
 core/config.py
 core/license.py
 core/models.py
+core/protocols.py
 core/py.typed
 core/research.py
 core/rules.py
 core/state.py
 core/triage.py
+core/unsubscribe.py
 core/voice.py
 mcp_server/__init__.py
 mcp_server/__main__.py
@@ -50,6 +57,9 @@ providers/imap.py
 providers/mailapp.py
 providers/outlook.py
 scripts/build_macos_bundle.sh
+uma_platform/__init__.py
+uma_platform/checkout.py
+uma_platform/saas_runner.py
 universal_mail_automation.egg-info/PKG-INFO
 universal_mail_automation.egg-info/SOURCES.txt
 universal_mail_automation.egg-info/dependency_links.txt

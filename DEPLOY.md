@@ -1,5 +1,39 @@
 # Deploy
 
+## Current status — 2026-06-27
+
+This checkout is deploy-ready as a build candidate:
+
+- Python tests: `500 passed`.
+- Python lint: `python3 -m ruff check --select E9,F63,F7,F82 .` passed.
+- Python package: `python3 -m build --no-isolation` produced
+  `dist/universal_mail_automation-0.1.0-py3-none-any.whl` and
+  `dist/universal_mail_automation-0.1.0.tar.gz`; `twine check dist/*` passed.
+- Wheel smoke: `umail --version` and `import core; core.__version__` passed from
+  the built wheel.
+- Web: `npm ci --offline`, `npm run lint -- --max-warnings=0`, and
+  `npm run build` passed; static export is in `web/out`.
+- Cloudflare Worker unit tests: `node --test cloudflare/worker.test.mjs` passed.
+- API smoke: `/health`, `/v1/billing/plans`, `/v1/senders/check`, and `/app/`
+  passed through FastAPI `TestClient`.
+
+Exactly what remains:
+
+1. Merge/release gate: review CI for this branch/PR, then merge it to `main`.
+   Do not merge stale duplicate PRs one by one; close or supersede them after this
+   lands. PR #77's critical stdlib-shadowing fix is included here via
+   `platform/` -> `uma_platform/`.
+2. Outward deploy credentials: set `CLOUDFLARE_API_TOKEN` for the share Worker
+   deploy, or set a container host target (`RENDER_DEPLOY_HOOK`, Fly/Render/GHCR
+   auth) before publishing outside this machine.
+3. Revenue secrets for paid/live operation: set Stripe price/webhook secrets and
+   provider mailbox credentials in the host environment. Credential-free demo
+   endpoints already run without these.
+
+Local limitations during this verification: this sandbox cannot bind listening
+ports and has no `docker` binary, so the container smoke was represented by the
+in-process FastAPI smoke plus package/web/worker builds.
+
 The service is a single FastAPI app (API at `/v1/*`, dashboard at `/app`, health at
 `/health`). It ships as a `Dockerfile` that honors a platform-provided `$PORT`, so it
 runs unchanged on any container host.

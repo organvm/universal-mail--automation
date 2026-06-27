@@ -1,8 +1,4 @@
-"""Tests for the license-issued webhook receiver (platform/checkout.py).
-
-The receiver is loaded by file path rather than ``import platform.checkout`` so
-the test never binds the local ``platform`` package over Python's stdlib
-``platform`` module for the rest of the process.
+"""Tests for the license-issued webhook receiver (uma_platform/checkout.py).
 
 Coverage: constant-time signature verification, atomic 0600 license write, and
 the fail-closed route contract (503 unconfigured, 400 unverified/unparseable with
@@ -11,10 +7,7 @@ nothing written, 200 + persisted license on a verified body).
 
 import hashlib
 import hmac
-import importlib.util
 import json
-import os
-from pathlib import Path
 
 import pytest
 
@@ -22,13 +15,7 @@ pytest.importorskip("fastapi")
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-_HERE = Path(__file__).resolve().parent
-_MODULE_PATH = _HERE.parent / "platform" / "checkout.py"
-
-_spec = importlib.util.spec_from_file_location("platform_checkout", _MODULE_PATH)
-checkout = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(checkout)
+from uma_platform import checkout
 
 SECRET = "s3cr3t-shared"
 BODY = json.dumps({"license_key": "ABC-123", "plan": "pro", "seats": 3}).encode()

@@ -1,5 +1,5 @@
 [![ORGAN-III: Ergon](https://img.shields.io/badge/ORGAN--III-Ergon-1b5e20?style=flat-square)](https://github.com/organvm-iii-ergon)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 # Universal Mail Automation
@@ -240,7 +240,7 @@ The `core/models.py` module defines three provider-agnostic dataclasses:
 
 ### Prerequisites
 
-- Python 3.10 or later
+- Python 3.9 or later
 - macOS (for Mail.app provider and launchd scheduling; Gmail/Outlook/IMAP work on any platform)
 - Gmail API credentials (OAuth client JSON via Google Cloud Console)
 - Outlook Azure app registration (for Outlook.com provider)
@@ -329,7 +329,7 @@ python3 cli.py label --provider imap --host imap.mail.me.com
 
 ## CLI Reference
 
-The CLI (`cli.py`, installed as `umail`) is built on `argparse` and provides eight subcommands — `label`, `report`, `health`, `escalate`, `summary`, `pending`, `vip`, and `triage` — each accepting a shared `--provider {gmail,imap,mailapp,outlook}` flag (default `gmail`) to target a specific email service. Global flags `-v/--verbose` and `--version` apply to every subcommand.
+The CLI (`cli.py`, installed as `umail`) is built on `argparse` and provides eight subcommands — `label`, `report`, `health`, `escalate`, `summary`, `pending`, `vip`, and `triage` — each accepting a shared `--provider {gmail,imap,mailapp,outlook}` flag (default `gmail`) to target a specific email service. The global flag `-v/--verbose` applies to every subcommand.
 
 ### Labeling Commands
 

@@ -1,15 +1,15 @@
-[![ORGAN-III: Ergon](https://img.shields.io/badge/ORGAN--III-Ergon-1b5e20?style=flat-square)](https://github.com/organvm-iii-ergon)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![ORGAN-III: Ergon](https://img.shields.io/badge/ORGAN--III-Ergon-1b5e20?style=flat-square)](https://github.com/organvm)
+[![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 # Universal Mail Automation
 
-[![CI](https://github.com/organvm-iii-ergon/universal-mail--automation/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm-iii-ergon/universal-mail--automation/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-pending-lightgrey)](https://github.com/organvm-iii-ergon/universal-mail--automation)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/organvm-iii-ergon/universal-mail--automation/blob/main/LICENSE)
-[![Organ III](https://img.shields.io/badge/Organ-III%20Ergon-F59E0B)](https://github.com/organvm-iii-ergon)
-[![Status](https://img.shields.io/badge/status-active-brightgreen)](https://github.com/organvm-iii-ergon/universal-mail--automation)
-[![Python](https://img.shields.io/badge/lang-Python-informational)](https://github.com/organvm-iii-ergon/universal-mail--automation)
+[![CI](https://github.com/organvm/universal-mail--automation/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm/universal-mail--automation/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-pending-lightgrey)](https://github.com/organvm/universal-mail--automation)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/organvm/universal-mail--automation/blob/main/LICENSE)
+[![Organ III](https://img.shields.io/badge/Organ-III%20Ergon-F59E0B)](https://github.com/organvm)
+[![Status](https://img.shields.io/badge/status-active-brightgreen)](https://github.com/organvm/universal-mail--automation)
+[![Python](https://img.shields.io/badge/lang-Python-informational)](https://github.com/organvm/universal-mail--automation)
 
 
 **Automated inbox triage across Gmail, Outlook, and iCloud using a shared categorization engine, Eisenhower priority tiers, and time-based escalation — unified behind a single CLI.**
@@ -19,7 +19,8 @@
 ## Table of Contents
 
 - [The Problem](#the-problem)
-- [Product Overview](#product-overview)
+- [What It Is](#what-it-is)
+- [Who Pays](#who-pays)
 - [Cloudflare Share Demo](#cloudflare-share-demo)
 - [Technical Architecture](#technical-architecture)
   - [System Diagram](#system-diagram)
@@ -31,11 +32,17 @@
   - [Time-Based Escalation](#time-based-escalation)
   - [State Management and Crash Recovery](#state-management-and-crash-recovery)
   - [Data Models](#data-models)
-- [Installation and Quick Start](#installation-and-quick-start)
+- [Install](#install)
   - [Prerequisites](#prerequisites)
-  - [Automated Deployment](#automated-deployment)
-  - [Manual Setup](#manual-setup)
-  - [First Run](#first-run)
+  - [Install from PyPI](#install-from-pypi)
+  - [Install from Source](#install-from-source)
+  - [Local On-Demand Intake](#local-on-demand-intake)
+  - [macOS Bundle and Scheduled Runs](#macos-bundle-and-scheduled-runs)
+- [Usage](#usage)
+  - [Safe Preview](#safe-preview)
+  - [Apply Triage](#apply-triage)
+  - [Reports and Follow-up](#reports-and-follow-up)
+  - [API and Agent Surfaces](#api-and-agent-surfaces)
 - [CLI Reference](#cli-reference)
   - [Labeling Commands](#labeling-commands)
   - [Reporting Commands](#reporting-commands)
@@ -45,10 +52,11 @@
   - [Configuration Precedence](#configuration-precedence)
   - [YAML Configuration File](#yaml-configuration-file)
   - [Environment Variables](#environment-variables)
-  - [1Password Integration](#1password-integration)
+  - [Auth Service and Legacy 1Password](#auth-service-and-legacy-1password)
   - [Adding Custom Rules](#adding-custom-rules)
   - [Configuring VIP Senders](#configuring-vip-senders)
 - [Provider Capabilities Matrix](#provider-capabilities-matrix)
+- [Pricing](#pricing)
 - [Label Taxonomy](#label-taxonomy)
 - [Scheduling and Daily Automation](#scheduling-and-daily-automation)
 - [Cross-Organ Context](#cross-organ-context)
@@ -69,17 +77,56 @@ This project eliminates that fragmentation. One set of categorization rules. One
 
 ---
 
-## Product Overview
+## What It Is
 
-Universal Mail Automation is a Python-based email triage system that applies a unified set of categorization rules across Gmail (via REST API), Outlook.com (via Microsoft Graph API), iCloud and any standard IMAP server, and macOS Mail.app (via AppleScript). The system operates on three coordinated principles:
+Universal Mail Automation is a local-first inbox triage engine with hosted API
+and agent surfaces. It applies one categorization and priority model across
+Gmail, Outlook.com, iCloud/IMAP, and macOS Mail.app instead of asking you to
+maintain separate filters in every provider.
 
-1. **Unified Rules Engine** — A single taxonomy of 28 hierarchical categories (`Dev/GitHub`, `Finance/Banking`, `AI/Services`, `Travel`, `Marketing`, etc.) defined as regex patterns in `core/rules.py`. Define a rule once, and it applies to every provider.
+The product does four jobs:
 
-2. **Eisenhower Matrix Prioritization** — Every email is assigned to one of four priority tiers (Critical, Important, Delegate, Reference) that determine whether it stays in the inbox, gets archived, gets starred, or simply gets categorized for later retrieval.
+1. **Unifies provider behavior** - Gmail labels, Outlook categories, IMAP
+   folders, and Mail.app actions are driven by the same provider-agnostic
+   engine.
+2. **Classifies mail once** - a shared taxonomy of 28 hierarchical categories
+   (`Dev/GitHub`, `Finance/Banking`, `AI/Services`, `Travel`, `Marketing`, etc.)
+   lives in `core/rules.py`.
+3. **Turns classification into action** - each message receives an Eisenhower
+   tier: Critical, Important, Delegate, or Reference. That tier decides whether
+   the message stays in the inbox, gets starred, moves to an action folder, or
+   is archived for reference.
+4. **Proves restraint** - protected senders such as government, financial,
+   legal, security, and platform-critical mail are guarded by a fail-closed
+   safety check and an independent signed audit receipt. The system should not
+   report success if protected mail was archived.
 
-3. **Time-Based Escalation** — Emails that remain unprocessed age into higher priority tiers. A Tier 4 (Reference) email that sits for 72+ hours automatically escalates to Tier 1 (Critical), ensuring nothing falls through the cracks.
+The first-class user experience is the `umail` CLI and the on-demand local
+runner. The same engine also powers a FastAPI service, a Model Context Protocol
+server for agents, and Agentic Commerce Protocol checkout for prepaid agent
+runs.
 
-The system is designed for daily intake, but the primary local path is on-demand. Use `scripts/intake_now.sh` to create/reuse the venv, verify Gmail auth, and write private triage reports under user-local state. A macOS `launchd` job is available only as an explicit opt-in for machines where LaunchAgents are allowed.
+## Who Pays
+
+Universal Mail Automation is built for operators with consequence-bearing mail:
+solo builders, freelancers, founders, small firms, and AI agents that need
+verified-safe email triage instead of raw archive/delete access.
+
+- **Single-inbox self-hosters** use Free / Self-host. They pay nothing, keep the
+  complete safety floor, and run one Gmail workflow locally or against the
+  hosted free allowance.
+- **Multi-account operators** pay for Pro when the pain is spread across Gmail,
+  Outlook, iCloud, Mail.app, or IMAP. The paid value is reach: all providers,
+  scheduled triage, webhooks, and retained receipts.
+- **Small teams and agent operators** pay for Business when they need unlimited
+  runs, multiple mailboxes, shared protected-sender policy, MCP access, ACP
+  commerce, and longer receipt retention.
+- **Autonomous agents** can pay per run or buy one-time credit packs via ACP
+  instead of holding a human subscription.
+
+The protected-sender gate and the signed audit receipt are not paywalled. Every
+tier gets the same safety mechanism; monetization is based on run volume,
+provider reach, agent access, and receipt retention.
 
 ---
 
@@ -150,7 +197,8 @@ universal-mail--automation/
 │   └── mailapp.py                  # macOS Mail.app via AppleScript subprocess
 ├── auth/                           # Authentication helpers
 │   ├── __init__.py
-│   └── onepassword.py              # 1Password CLI integration for secrets
+│   ├── service.py                  # Tokenized encrypted secret store
+│   └── onepassword.py              # Legacy 1Password CLI integration for secrets
 ├── deploy.sh                       # macOS setup script (venv; launchd opt-in only)
 ├── scripts/intake_now.sh           # On-demand Gmail intake runner
 ├── run_automation.sh               # Daily runner script (all providers)
@@ -236,23 +284,71 @@ The `core/models.py` module defines three provider-agnostic dataclasses:
 
 ---
 
-## Installation and Quick Start
+## Install
 
 ### Prerequisites
 
-- Python 3.10 or later
-- macOS (for Mail.app provider and launchd scheduling; Gmail/Outlook/IMAP work on any platform)
-- Gmail API credentials (OAuth client JSON via Google Cloud Console)
-- Outlook Azure app registration (for Outlook.com provider)
-- 1Password CLI (`op`) for secrets management (recommended)
+- Python 3.9 or later for the core CLI and Gmail provider. Python 3.10 or later
+  is required for the MCP server.
+- Provider credentials for any mailbox you want to process:
+  - Gmail: OAuth client JSON and token material, loaded from local env or
+    1Password-backed references.
+  - Outlook.com: Azure app registration client ID and token cache.
+  - iCloud/IMAP: IMAP host, username, and app-specific password.
+  - Mail.app: macOS with the local Mail app configured.
+- 1Password CLI (`op`) is recommended for secrets. OAuth client JSON, tokens,
+  app passwords, API keys, and log files should stay out of commits.
+- macOS is only required for Mail.app automation and optional `launchd`
+  scheduling. Gmail, Outlook, IMAP, the API, and the MCP server are portable.
+
+### Install from PyPI
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Distribution install: core CLI + Gmail provider
+pip install universal-mail-automation
+
+umail --help
+umail health --provider gmail
+```
+
+If your package index provides extras, install only the surfaces you need:
+
+| Extra | Adds | Install |
+|-------|------|---------|
+| `outlook` | Outlook.com / Microsoft Graph | `pip install "universal-mail-automation[outlook]"` |
+| `yaml` | `~/.config/mail_automation/config.yaml` support | `pip install "universal-mail-automation[yaml]"` |
+| `api` | FastAPI HTTP surface and Stripe billing routes | `pip install "universal-mail-automation[api]"` |
+| `mcp` | MCP server (`umail-mcp`, Python 3.10+) | `pip install "universal-mail-automation[mcp]"` |
+| `all` | All non-MCP extras | `pip install "universal-mail-automation[all]"` |
+
+### Install from Source
+
+```bash
+git clone https://github.com/organvm/universal-mail--automation.git
+cd universal-mail--automation
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-api.txt    # optional API surface
+pip install -r requirements-mcp.txt    # optional MCP server
+pip install pytest
+
+# Offline validation, no mailbox credentials required
+pytest -q
+```
+
+From a source checkout, run the CLI as `python3 cli.py`.
 
 ### Local On-Demand Intake
 
-This machine's home-level agent policy forbids LaunchAgents. The safe default is
-the on-demand intake runner:
+The safe default for local use is the on-demand intake runner:
 
 ```bash
-cd ~/Code/organvm/universal-mail--automation
+source ~/.config/op/mail_automation.env.op.sh
 scripts/intake_now.sh
 ```
 
@@ -271,22 +367,18 @@ The most useful output files are:
 - `*-drafts.md` — stuck drafts from the last 30 days
 - `*-gmail-risk.md` — broader two-week risk/payment/security/provider queue
 
-### Automated Setup
+### macOS Bundle and Scheduled Runs
 
-The `deploy.sh` script handles the complete setup:
+For a packaged macOS directory with a private virtualenv:
 
 ```bash
-git clone https://github.com/organvm-iii-ergon/universal-mail--automation.git
-cd universal-mail--automation
-./deploy.sh
+scripts/build_macos_bundle.sh
 ```
 
-This will:
-1. Create a Python virtual environment at `.venv/`
-2. Install all dependencies from `requirements.txt` (plus `msal` and `requests` for Outlook)
-3. Make `run_automation.sh` executable
-4. Create the log directory at `~/System/Logs/mail_automation/`
-5. Skip LaunchAgent installation unless explicitly requested
+The legacy `deploy.sh` setup still works for source checkouts. It creates a
+virtualenv, installs dependencies, makes `run_automation.sh` executable, and
+creates the log directory at `~/System/Logs/mail_automation/`. It skips
+LaunchAgent installation unless explicitly requested.
 
 To opt into launchd on a machine where that is allowed:
 
@@ -294,42 +386,92 @@ To opt into launchd on a machine where that is allowed:
 INSTALL_LAUNCH_AGENT=1 ./deploy.sh
 ```
 
-### Manual Setup
+## Usage
+
+Start with a dry-run. Apply runs can move or archive mail depending on provider
+capabilities and tier rules. By default, live label runs write an append-only
+receipt under `audit/<provider>-triage.jsonl`; the default `audit/` directory is
+gitignored, but custom receipt paths may contain real sender data.
+
+### Safe Preview
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install msal requests   # For Outlook support
-```
-
-### First Run
-
-```bash
-# Load secrets (1Password integration)
+# Load local secrets when using 1Password-backed env
 source ~/.config/op/mail_automation.env.op.sh
 
-# Dry run to preview changes (no modifications made)
-python3 cli.py label --provider gmail --dry-run
+# Verify provider credentials
+umail health --provider gmail
 
-# Apply labels to unlabeled Gmail messages
-python3 cli.py label --provider gmail --query "has:nouserlabels"
+# Preview labeling without modifying mail
+umail label --provider gmail --query "has:nouserlabels" --dry-run
 
-# Process Outlook inbox
-python3 cli.py label --provider outlook
-
-# Process iCloud via IMAP
-python3 cli.py label --provider imap --host imap.mail.me.com
-
-# Run all providers sequentially
-./run_automation.sh
+# Rank the mailbox without applying provider changes
+umail triage --provider gmail --limit 100 --top 20 --format markdown
 ```
+
+### Apply Triage
+
+```bash
+# Apply labels to unlabeled Gmail messages
+umail label --provider gmail --query "has:nouserlabels"
+
+# Process Outlook inbox with Eisenhower tier routing
+umail label --provider outlook --tier-routing
+
+# Process iCloud through IMAP
+umail label --provider imap --host imap.mail.me.com --user "$IMAP_USER"
+
+# Process local macOS Mail.app
+umail label --provider mailapp --account "iCloud"
+```
+
+### Reports and Follow-up
+
+```bash
+# Summary by priority tier
+umail summary --provider gmail
+
+# List items needing action
+umail pending --provider gmail
+
+# Show VIP sender activity
+umail vip --provider gmail
+
+# Preview then apply time-based escalation for stale mail
+umail escalate --provider gmail --dry-run
+umail escalate --provider gmail
+
+# Produce local intake reports
+scripts/intake_now.sh
+```
+
+### API and Agent Surfaces
+
+```bash
+# HTTP API and dashboard
+pip install -r requirements-api.txt -r requirements-mcp.txt
+uvicorn api.app:app --reload
+
+# Public catalog, no Stripe credentials needed
+curl -s http://127.0.0.1:8000/v1/billing/plans
+
+# Local MCP server for agent clients
+python -m mcp_server
+```
+
+The API exposes dry-run preview, live triage, billing, signed audit receipts,
+and protected-sender checks. Live `/v1/triage` calls require an account API key;
+`/v1/triage/preview` and `/v1/senders/check` are safe for demos because they do
+not mutate mail.
 
 ---
 
 ## CLI Reference
 
-The CLI (`cli.py`, installed as `umail`) is built on `argparse` and provides eight subcommands — `label`, `report`, `health`, `escalate`, `summary`, `pending`, `vip`, and `triage` — each accepting a shared `--provider {gmail,imap,mailapp,outlook}` flag (default `gmail`) to target a specific email service. Global flags `-v/--verbose` and `--version` apply to every subcommand.
+The examples below use `python3 cli.py` for source checkouts. Installed users
+can replace it with `umail`.
+
+The CLI (`cli.py`, installed as `umail`) is built on `argparse` and provides eight subcommands — `label`, `report`, `health`, `escalate`, `summary`, `pending`, `vip`, and `triage` — each accepting a shared `--provider {gmail,imap,mailapp,outlook}` flag (default `gmail`) to target a specific email service. Global flag `-v/--verbose` applies to every subcommand.
 
 ### Labeling Commands
 
@@ -508,9 +650,22 @@ mailapp:
 | `OUTLOOK_CLIENT_ID` | Azure app registration client ID | *(required)* |
 | `OUTLOOK_TOKEN_CACHE` | Path to Outlook token cache file | `~/.outlook_token_cache.json` |
 
-### 1Password Integration
+### Auth Service and Legacy 1Password
 
-Secrets are loaded from 1Password via environment variables, typically sourced from a shell script:
+`auth/service.py` provides the replacement path for env/1Password credential
+loading: secrets are stored behind opaque `uma_auth_*` tokens in an encrypted
+SQLite store under `data/` by default, with monthly data-key rotation. Providers
+still use the legacy environment/1Password model until they are wired to resolve
+these tokens at `connect()` time.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `UMA_AUTH_STORE_PATH` | SQLite path for tokenized auth secrets | `data/auth_service.db` |
+| `UMA_AUTH_KEY_PATH` | Local master-key file when `UMA_AUTH_MASTER_KEY` is unset | `data/auth_service.key` |
+| `UMA_AUTH_MASTER_KEY` | Optional base64 master key from `auth.service.generate_master_key()` | *(generated key file)* |
+
+Legacy secrets are loaded from 1Password via environment variables, typically
+sourced from a shell script:
 
 ```bash
 # ~/.config/op/mail_automation.env.op.sh
@@ -588,6 +743,35 @@ vip_senders:
 The Gmail provider is the most capable, supporting batch `batchModify` operations that can apply labels to up to 1,000 messages in a single API call. It also implements exponential backoff with retry logic for `rateLimitExceeded`, `userRateLimitExceeded`, and `quotaExceeded` errors, with a configurable base delay starting at 10 seconds.
 
 The Outlook provider uniquely supports **color categories** (25 preset colors) and **due-date flagging** that syncs with Microsoft To Do, enabling task management integration. It handles hierarchical folder creation automatically, creating nested folder paths like `Action/Critical` by walking the path segments.
+
+---
+
+## Pricing
+
+**Sold on the negative guarantee, not feature withholding.** The fail-closed
+protected-sender gate and the independent signed audit receipt are identical on
+every tier, including Free. Paid plans charge for reach and retention: more live
+runs, more providers, scheduled/agent access, and retained receipt history.
+
+| Plan | Price | Runs | Providers | Receipt retention | Best for |
+|------|-------|------|-----------|-------------------|----------|
+| **Free / Self-host** | $0 | 50 live hosted runs / month; unlimited dry-runs | Gmail | Local receipt only | One personal Gmail workflow, local evaluation, and safety proof without payment. |
+| **Pro** | $19/mo | 5,000 live runs / month | Gmail, IMAP/iCloud, Outlook, Mail.app | 90 days | Multi-account operators who want all providers, scheduled triage, webhooks, and downloadable signed receipts. |
+| **Business** | $49/mo | Unlimited | All providers | 1 year | Multi-mailbox teams, shared protected-sender policy, compliance export, MCP server access, ACP agent-commerce access, and priority support. |
+
+Agent usage is metered separately at **$0.01 per triage run** for MCP tool calls
+and ACP purchases. Agents can also buy one-time credit packs through Agentic
+Commerce Protocol:
+
+| Pack | Runs | Price |
+|------|------|-------|
+| 100 verified-safe triage runs | 100 | $1.00 |
+| 1,000 verified-safe triage runs | 1,000 | $9.00 |
+
+Subscriptions are managed through Stripe Checkout and the self-serve Customer
+Portal. The public plan catalog is available at `GET /v1/billing/plans`; the
+generated [pricing.md](pricing.md) file is derived from the same `api/plans.py`
+catalog used for runtime entitlements.
 
 ---
 

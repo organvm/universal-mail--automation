@@ -1,40 +1,79 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "universal-mail-automation"
 version = "0.1.0"
-description = "Automated inbox triage with a fail-closed safety gate and independent audit receipts."
+description = "Multi-provider inbox triage across Gmail, Outlook, IMAP, and macOS Mail with a shared categorization engine, Eisenhower priority tiers, and time-based escalation."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Anthony", email = "anthony@organvm.org" }]
+keywords = ["email", "gmail", "outlook", "imap", "automation", "triage", "inbox", "labeling"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Communications :: Email",
+    "Topic :: Utilities",
+]
+
 dependencies = [
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
+    "google-api-python-client>=2.197.0,<3",
+    "google-auth-httplib2>=0.4.0,<1",
+    "google-auth-oauthlib>=1.4.0,<2",
 ]
 
 [project.optional-dependencies]
-api = [
-    "fastapi>=0.100.0",
-    "uvicorn>=0.22.0",
-    "stripe>=10.0.0",
-]
 outlook = [
     "msal>=1.20.0",
     "requests>=2.30.0",
 ]
+api = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "httpx>=0.28.1",
+    "stripe>=10.0.0",
+]
 mcp = [
+    "mcp>=1.1.2",
+]
+all = [
+    "msal>=1.20.0",
+    "requests>=2.30.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "httpx>=0.28.1",
+    "stripe>=10.0.0",
     "mcp>=1.1.2",
 ]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "build",
+    "twine",
 ]
+
+[project.urls]
+Homepage = "https://github.com/organvm-iii-ergon/universal-mail--automation"
+Repository = "https://github.com/organvm-iii-ergon/universal-mail--automation"
+Changelog = "https://github.com/organvm-iii-ergon/universal-mail--automation/blob/main/CHANGELOG.md"
+"Live Demo" = "https://uma.4444j99.dev"
 
 [project.scripts]
 umail = "cli:main"
+umail-mcp = "mcp_server.server:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

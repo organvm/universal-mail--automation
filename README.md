@@ -329,7 +329,7 @@ python3 cli.py label --provider imap --host imap.mail.me.com
 
 ## CLI Reference
 
-The CLI (`cli.py`, installed as `umail`) is built on `argparse` and provides eight subcommands — `label`, `report`, `health`, `escalate`, `summary`, `pending`, `vip`, and `triage` — each accepting a shared `--provider {gmail,imap,mailapp,outlook}` flag (default `gmail`) to target a specific email service. Global flags `-v/--verbose` and `--version` apply to every subcommand.
+The CLI (`cli.py`) is built on `argparse` and provides eight subcommands — `label`, `report`, `health`, `escalate`, `summary`, `pending`, `vip`, and `triage` — each accepting a shared `--provider {gmail,imap,mailapp,outlook}` flag (default `gmail`) to target a specific email service. The global flag `-v/--verbose` enables debug logging and applies to every subcommand.
 
 ### Labeling Commands
 

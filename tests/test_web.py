@@ -55,3 +55,33 @@ def test_dashboard_interactive_controls_use_real_api_states():
 def test_dashboard_defines_status_color_tokens():
     for token in ("--green:", "--green-2:", "--green-soft:"):
         assert token in WEB_HTML
+
+
+def test_checkout_saves_api_key_to_localstorage_before_redirect():
+    # The checkout handler must persist account_api_key to localStorage before
+    # navigating to Stripe — otherwise a new subscriber loses their only key.
+    assert "uma-pending-key" in WEB_HTML
+    assert "localStorage.setItem" in WEB_HTML
+    # Must store the key BEFORE the redirect (setItem appears before location.href).
+    set_pos = WEB_HTML.index('localStorage.setItem("uma-pending-key"')
+    href_pos = WEB_HTML.index("window.location.href = data.url")
+    assert set_pos < href_pos, "api key must be saved before the Stripe redirect"
+
+
+def test_billing_success_shows_api_key_from_localstorage():
+    # On ?billing=success return, the handler reads and displays the saved key,
+    # then clears it so it's shown exactly once.
+    assert 'localStorage.getItem("uma-pending-key")' in WEB_HTML
+    assert 'localStorage.removeItem("uma-pending-key")' in WEB_HTML
+    assert "Authorization: Bearer" in WEB_HTML
+    assert "api-key-reveal" in WEB_HTML
+
+
+def test_plan_cards_render_features_from_api():
+    # renderPlans must use p.features from the API payload, not a hardcoded list.
+    assert "p.features" in WEB_HTML
+    # The static fallback SAMPLE_PLANS must also carry features so the plan cards
+    # are informative even when the API is unreachable.
+    assert '"Everything in Free"' in WEB_HTML
+    assert '"Scheduled / recurring triage + webhooks"' in WEB_HTML
+    assert '"MCP server access + ACP agent-commerce surface"' in WEB_HTML

@@ -39,6 +39,7 @@ from core.rules import (
     calculate_email_age_hours,
     get_tier_config,
 )
+from core import __version__
 from core.state import StateManager
 from core.models import LabelAction, ProcessingResult
 from core.config import load_config, apply_vip_senders_from_config
@@ -1026,6 +1027,11 @@ Examples:
     )
 
     # Global options
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",

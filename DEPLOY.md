@@ -13,7 +13,7 @@ surface, not the canonical product backend.
 
 ## Verified locally
 
-These checks passed on 2026-06-29:
+These checks passed on 2026-06-30:
 
 ```bash
 python3 -m pytest -q                               # 517 passed
@@ -60,9 +60,9 @@ CLOUDFLARE_API_TOKEN=... npx wrangler@4 deploy
 
 ## What remains
 
-1. ✅ **PR/CI gate** — all open PRs merged or closed (2026-06-29). CI on `main`
+1. ✅ **PR/CI gate** — all open PRs merged or closed (2026-06-30). CI on `main`
    is fully green: Python 3.11, 3.12, package build (wheel smoke-test including
-   `umail --version`), web lint/build, Cloudflare Worker tests. No open PRs.
+   `umail --version`), web lint/build, Cloudflare Worker tests. No open PRs block deploy.
 2. **Production host gate** — choose the live host and set its base env. A
    no-credential demo only needs the app deployed; set `MCP_ALLOWED_HOSTS` to
    the public hostname if `/mcp` is exposed.

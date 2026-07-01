@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from core.intake import build_triage_intake_packet
 
 from api import metering, receipts, service
+from api.store import AccountRow
 
 
 class AccountRequired(RuntimeError):
@@ -23,7 +24,7 @@ def run_triage_with_receipt(
     remove_label: Optional[str],
     tier_routing: bool,
     vip_only: bool,
-    account: Optional[dict] = None,
+    account: AccountRow | None = None,
     surface: str = "api",
     actor: Optional[Dict[str, Any]] = None,
     auth: Optional[Dict[str, Any]] = None,

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 """Top-level ``platform`` package for the universal-mail SaaS layer.
 
 ⚠️  This package shares its name with the Python standard-library ``platform``
@@ -73,3 +74,11 @@ if _stdlib is not None:
         if _name.startswith("_"):
             continue
         globals()[_name] = getattr(_stdlib, _name)
+=======
+"""Platform-facing receivers for the storefront that sells mail-automation seats.
+
+Currently a single module, :mod:`platform.checkout`, which receives the
+``license-issued`` webhook and persists the granted license for the local engine
+to read (see ``core/license.py``).
+"""
+>>>>>>> main

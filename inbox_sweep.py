@@ -140,28 +140,31 @@ def is_bulk_sender(sender):
 def decide(sender, subject, tier, protected, label=""):
     """Return 'fire' | 'keep' | 'archive'."""
     text = f"{subject}"
-    bulk = is_bulk_sender(sender)
-    # A genuine, consequential action ALWAYS surfaces first. This preserves every real
-    # obligation (billing/default/fraud/security/verify/expiry) regardless of sender.
+    # "Promotional" = a bulk/newsletter mailbox, a definitively-promotional category the
+    # vetted classifier already assigned (Marketing/Entertainment), or a noise subject.
+    promotional = (is_bulk_sender(sender) or label in ("Marketing", "Entertainment")
+                   or bool(NOISE_SIGNALS.search(text)))
+    # 1. A genuine, consequential action ALWAYS surfaces first — preserves every real
+    #    obligation (billing/default/fraud/security/verify/expiry) regardless of sender.
     if ACTION_SIGNALS.search(text):
         return "fire"
-    # A real person writing personally surfaces — but a bulk/newsletter mailbox with a
-    # human-LOOKING display name ("Ivan at Notion" <ivan@mail.notion.so>, "Hong Yi from
-    # Warp" <referrals@warp.dev>, "OpenRouter Team" <welcome@openrouter.ai>) is NOT a
-    # personal note and must not fire on the display name alone. Excluding bulk senders
-    # here is the ROOT-CAUSE fix for the flagged-newsletter storm: looks_human() used to
-    # over-fire on nearly every newsletter that fronts a First-Last display name.
-    if looks_human(sender) and not bulk:
-        return "fire"
+    # 2. Government / legal / e-sign senders always surface (high-stakes).
     if important_sender(sender):
+        return "fire"
+    # 3. Clearly promotional mail is NEVER a fire — even when a First-Last display name
+    #    makes it "look human" ("IBEN Team" <IBEN@ibo.org>, "Ivan at Notion"
+    #    <ivan@mail.notion.so>, "Hong Yi from Warp" <referrals@warp.dev>). This is the
+    #    ROOT-CAUSE fix for the flagged-newsletter storm (looks_human previously
+    #    over-fired on ~every newsletter fronting a human name). A PROTECTED sender is
+    #    still shielded from archiving — kept in inbox, never moved.
+    if promotional:
+        return "keep" if protected else "archive"
+    # 4. A real person writing personally surfaces.
+    if looks_human(sender):
         return "fire"
     if protected:
         return "keep"          # HARD fail-closed never-archive gate: a protected sender is
-                               # NEVER archived, even if its subject trips a noise word. (The
-                               # fire check above still lets a genuine action surface first.)
-                               # Must precede NOISE_SIGNALS — else the gate is fail-OPEN.
-    if NOISE_SIGNALS.search(text) or bulk or label in ("Marketing", "Entertainment"):
-        return "archive"
+                               # NEVER archived. Must precede the tier fall-through below.
     if tier <= 2:
         return "keep"
     return "archive"

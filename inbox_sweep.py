@@ -74,6 +74,29 @@ ROLE_TOKENS = ROLE_LOCALPARTS + (
 IMPORTANT_DOMAINS = ("studentaid.gov", ".gov", "legalzoom.com", "docusign", "irs.gov",
                      "ssa.gov", "court", "nysenate", "nysenate.gov")
 
+# Bulk / newsletter mailboxes. A sender is bulk if its EXACT local-part is a role
+# address (welcome@/offers@/referrals@/news@…) OR its domain leads with a bulk-ESP
+# subdomain label (mail.notion.so, email.tiktok.com, news.termius.com, e.atlassian.com).
+# These are the senders whose human-LOOKING display name ("Ivan at Notion", "Hong Yi
+# from Warp", "OpenRouter Team") otherwise tricked looks_human() into firing — the root
+# cause of the flagged-newsletter storm. Matched on the EXACT local-part / leading
+# domain label (never a raw substring), so a genuine personal address is never swept in.
+BULK_LOCALPARTS = frozenset({
+    "welcome", "offers", "offer", "referrals", "referral", "newsletter", "newsletters",
+    "digest", "news", "press", "hello", "hi", "hey", "team", "post", "posts",
+    "community", "growth", "product", "education", "learn", "announce", "announcements",
+    "greetings", "connect", "social", "join", "discover", "explore", "insights",
+    "updates", "update", "notify", "notification", "notifications", "noreply",
+    "no-reply", "donotreply", "do-not-reply", "mailer", "marketing", "deals", "promo",
+    "promotions", "email", "members", "member", "story", "stories", "info",
+})
+BULK_SUBDOMAINS = frozenset({
+    "mail", "email", "e", "em", "news", "mktg", "marketing", "members", "member",
+    "go", "send", "click", "links", "link", "updates", "newsletter", "mailer",
+    "info", "reply", "notify", "notifications", "message", "messaging", "campaign",
+    "t", "cp", "engage",
+})
+
 
 def _addr(sender):
     return (sender.split("<")[-1].rstrip(">").strip().lower()
@@ -98,18 +121,50 @@ def important_sender(sender):
     return any(d in addr for d in IMPORTANT_DOMAINS)
 
 
-def decide(sender, subject, tier, protected):
+def is_bulk_sender(sender):
+    """True for a role / newsletter mailbox: an EXACT bulk local-part, or a domain
+    whose LEADING label is a bulk-ESP subdomain. Exact-match semantics (never a raw
+    substring), so 'feross@socket.dev' (real person) is NOT bulk while
+    'welcome@openrouter.ai' / 'ivan@mail.notion.so' / 'referrals@warp.dev' are."""
+    addr = _addr(sender)
+    if "@" not in addr:
+        return False
+    local, _, domain = addr.partition("@")
+    local = local.split("+", 1)[0]
+    if local in BULK_LOCALPARTS:
+        return True
+    labels = domain.split(".")
+    return len(labels) >= 3 and labels[0] in BULK_SUBDOMAINS
+
+
+def decide(sender, subject, tier, protected, label=""):
     """Return 'fire' | 'keep' | 'archive'."""
     text = f"{subject}"
-    if ACTION_SIGNALS.search(text) or looks_human(sender) or important_sender(sender):
+    # "Promotional" = a bulk/newsletter mailbox, a definitively-promotional category the
+    # vetted classifier already assigned (Marketing/Entertainment), or a noise subject.
+    promotional = (is_bulk_sender(sender) or label in ("Marketing", "Entertainment")
+                   or bool(NOISE_SIGNALS.search(text)))
+    # 1. A genuine, consequential action ALWAYS surfaces first — preserves every real
+    #    obligation (billing/default/fraud/security/verify/expiry) regardless of sender.
+    if ACTION_SIGNALS.search(text):
+        return "fire"
+    # 2. Government / legal / e-sign senders always surface (high-stakes).
+    if important_sender(sender):
+        return "fire"
+    # 3. Clearly promotional mail is NEVER a fire — even when a First-Last display name
+    #    makes it "look human" ("IBEN Team" <IBEN@ibo.org>, "Ivan at Notion"
+    #    <ivan@mail.notion.so>, "Hong Yi from Warp" <referrals@warp.dev>). This is the
+    #    ROOT-CAUSE fix for the flagged-newsletter storm (looks_human previously
+    #    over-fired on ~every newsletter fronting a human name). A PROTECTED sender is
+    #    still shielded from archiving — kept in inbox, never moved.
+    if promotional:
+        return "keep" if protected else "archive"
+    # 4. A real person writing personally surfaces.
+    if looks_human(sender):
         return "fire"
     if protected:
         return "keep"          # HARD fail-closed never-archive gate: a protected sender is
-                               # NEVER archived, even if its subject trips a noise word. (The
-                               # fire check above still lets a genuine action surface first.)
-                               # Must precede NOISE_SIGNALS — else the gate is fail-OPEN.
-    if NOISE_SIGNALS.search(text):
-        return "archive"
+                               # NEVER archived. Must precede the tier fall-through below.
     if tier <= 2:
         return "keep"
     return "archive"
@@ -130,7 +185,7 @@ def classify_inbox(provider, inbox_name, limit):
                 "id": m.id, "sender": sender, "subject": subject,
                 "is_read": m.is_read, "is_flagged": m.is_starred,
                 "label": cat.label, "tier": cat.tier, "protected": protected,
-                "action": decide(sender, subject, cat.tier, protected),
+                "action": decide(sender, subject, cat.tier, protected, cat.label),
             })
         fetched += len(res.messages)
         page_token = res.next_page_token
@@ -210,6 +265,60 @@ def _flag_fires(account, inbox, fire_ids):
     except ValueError:
         fc, ec = 0, 0
     return fc, ec
+
+
+def _unflag_noise(account, inbox, unflag_ids):
+    """Clear the flag on messages the classifier no longer considers fires — the
+    residue of the earlier looks_human over-fire (and the dormant labeler's
+    Tech/Security auto-stars). Symmetric to _flag_fires: a keyless status-bit toggle
+    Gmail respects immediately (no revert). Reversible; the receipt records every id."""
+    if not unflag_ids:
+        return 0, 0
+    ulist = "{" + ", ".join(unflag_ids) + "}"
+    _, out, _ = _osa(f'''tell application "Mail"
+      set mb to mailbox "{inbox}" of account "{account}"
+      set uc to 0
+      set ec to 0
+      repeat with anId in {ulist}
+        try
+          set flagged status of (first message of mb whose id is (anId as integer)) to false
+          set uc to uc + 1
+        on error
+          set ec to ec + 1
+        end try
+      end repeat
+      return (uc as string) & "," & (ec as string)
+    end tell''', timeout=300)
+    try:
+        uc, ec = (int(x) for x in out.split(","))
+    except ValueError:
+        uc, ec = 0, 0
+    return uc, ec
+
+
+def _list_flagged(account, inbox):
+    """Enumerate ONLY the currently-flagged messages in a mailbox via a `whose`
+    filter (fast — returns the ~dozens flagged, not the whole inbox), as
+    id\\tsender\\tsubject rows. Used by the one-time backlog un-flag so stars deeper
+    than the bounded --limit inbox slice are still cleaned."""
+    _, out, _ = _osa(f'''tell application "Mail"
+      set mb to mailbox "{inbox}" of account "{account}"
+      set outp to ""
+      repeat with m in (messages of mb whose flagged status is true)
+        try
+          set outp to outp & (id of m as string) & tab & (sender of m) & tab & (subject of m) & linefeed
+        end try
+      end repeat
+      return outp
+    end tell''', timeout=600)
+    rows = []
+    for line in out.split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            rows.append({"id": parts[0].strip(), "sender": parts[1], "subject": parts[2]})
+    return rows
 
 
 def _archive_folder(account, inbox, arch_ids, noise_mailbox):
@@ -320,18 +429,70 @@ def apply(account, inbox, rows, noise_mailbox, flag_only_gmail=False):
     (iCloud/Outlook, reliable). Keeps the beat bounded and fast without ever dead-stopping."""
     fire_ids = [str(r["id"]) for r in rows if r["action"] == "fire" and not r["is_flagged"]]
     arch_ids = [str(r["id"]) for r in rows if r["action"] == "archive"]
+    # Symmetric to flagging: a message that is flagged but the classifier now calls
+    # noise (archive) gets its flag CLEARED, so the flag pile converges to "flagged
+    # ⟺ fire" every beat instead of accreting the over-fire residue. Only 'archive'
+    # is unflagged — a flagged 'keep' (protected/ambiguous) is left as the user set it.
+    unflag_ids = [str(r["id"]) for r in rows if r["action"] == "archive" and r["is_flagged"]]
     is_gmail = _account_is_gmail(account)
 
     fc, fe = _flag_fires(account, inbox, fire_ids)
+    uc, ue = _unflag_noise(account, inbox, unflag_ids)
     if is_gmail:
         mc, me = (0, 0) if flag_only_gmail else _archive_gmail(account, inbox, arch_ids)
     else:
         mc, me = _archive_folder(account, inbox, arch_ids, noise_mailbox)
 
-    return {"flag_requested": len(fire_ids), "archive_requested": len(arch_ids),
+    return {"flag_requested": len(fire_ids), "unflag_requested": len(unflag_ids),
+            "archive_requested": len(arch_ids),
             "is_gmail": is_gmail, "flag_only_gmail": flag_only_gmail,
-            "flagged": fc, "archived": mc, "errors": fe + me,
-            "applescript": f"flagged={fc} archived={mc} err={fe + me}"}
+            "flagged": fc, "unflagged": uc, "archived": mc, "errors": fe + ue + me,
+            "applescript": f"flagged={fc} unflagged={uc} archived={mc} err={fe + ue + me}"}
+
+
+def unflag_backlog_run(account, inbox, do_apply, receipt_path=None):
+    """Backlog flag-hygiene pass: enumerate EVERY currently-flagged message in the
+    inbox, re-classify with the current rules, and clear the flag on those now judged
+    noise (archive). Reaches stars deeper than the bounded --limit inbox slice — the
+    accumulated residue of the looks_human over-fire + the dormant Tech/Security
+    labeler. Dry-run by default; NOTHING is archived or deleted, only flags cleared
+    (fully reversible). Writes a receipt naming every message whose flag it clears."""
+    flagged = _list_flagged(account, inbox)
+    decided = []
+    for r in flagged:
+        sender, subject = r["sender"] or "", r["subject"] or ""
+        protected = is_protected_sender(sender)
+        cat = categorize_with_tier(sender, subject)
+        action = decide(sender, subject, cat.tier, protected, cat.label)
+        decided.append({**r, "label": cat.label, "tier": cat.tier,
+                        "protected": protected, "action": action})
+    noise = [d for d in decided if d["action"] == "archive"]
+    keep = [d for d in decided if d["action"] != "archive"]
+    print(f"\n=== {account}  (mailbox: {inbox})  — {len(decided)} FLAGGED ===")
+    print(f"  un-flag (noise) = {len(noise)}   keep flagged (fire/keep) = {len(keep)}")
+    print(f"\n  --- WILL UN-FLAG — noise ({len(noise)}) ---")
+    for d in noise:
+        print(f"    [{d['label'][:16]:16}] {d['sender'][:34]:34} {d['subject'][:44]}")
+    print(f"\n  --- KEEP FLAGGED — real fires/keep ({len(keep)}) ---")
+    for d in keep:
+        print(f"    [{d['label'][:16]:16}] {d['sender'][:34]:34} {d['subject'][:44]}")
+    result = {"account": account, "inbox": inbox,
+              "mode": "unflag-apply" if do_apply else "unflag-dry",
+              "flagged_total": len(decided), "unflag_planned": len(noise), "keep": len(keep)}
+    if do_apply:
+        uc, ue = _unflag_noise(account, inbox, [d["id"] for d in noise])
+        result.update({"unflagged": uc, "errors": ue})
+        print(f"\n  done: un-flagged {uc}, errors {ue}")
+    else:
+        print("\n  DRY RUN — no flags changed. Re-run with --apply to execute.")
+    receipt = receipt_path or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "audit",
+        f"unflag_backlog-{account.replace('@', '_at_')}.json")
+    os.makedirs(os.path.dirname(receipt), exist_ok=True)
+    with open(receipt, "w") as f:
+        json.dump({"result": result, "rows": decided}, f, indent=2)
+    print(f"  receipt → {receipt}")
+    return 0
 
 
 def main(argv=None):
@@ -342,6 +503,9 @@ def main(argv=None):
     ap.add_argument("--flag-only-gmail", action="store_true",
                     help="autonomic mode: flag Gmail fires + archive folder stores, but skip the "
                          "heavy/futile Gmail bulk-archive loop (gated on a write door)")
+    ap.add_argument("--unflag-noise", action="store_true",
+                    help="backlog flag-hygiene: enumerate all flagged inbox messages and clear the "
+                         "flag on those the classifier now judges noise (nothing archived/deleted)")
     ap.add_argument("--noise-mailbox", default=NOISE_MAILBOX_DEFAULT)
     ap.add_argument("--receipt", default=None, help="path to write JSON receipt of all decisions")
     args = ap.parse_args(argv)
@@ -349,6 +513,8 @@ def main(argv=None):
     provider = MailAppProvider(account=args.account)
     provider.connect()
     inbox = pick_inbox_name(provider)
+    if args.unflag_noise:
+        return unflag_backlog_run(args.account, inbox, args.apply, args.receipt)
     rows = classify_inbox(provider, inbox, args.limit)
     report(args.account, inbox, rows)
 

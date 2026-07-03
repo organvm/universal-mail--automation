@@ -25,6 +25,7 @@ Mail tokens cannot do a raw IMAP LOGIN.
 import argparse
 import json
 import os
+import re
 import sys
 from collections import Counter
 
@@ -58,21 +59,77 @@ def classify(provider, mailbox, limit):
 STARRED_MAILBOX = "[Gmail]/Starred"
 
 
+# Transactional / resolved / newsletter subjects that are noise even when the
+# conservative inbox classifier keeps their (financial/gov) SENDER. These get
+# un-starred so the flag pile reflects real obligations, not receipts. Scoped to
+# the STAR sweep only — the inbox archive stays conservative.
+STAR_NOISE_SUBJECT = re.compile(r"""(?ix)
+    deposit\ is\ now | funds\ added | \bdeposit\b.{0,20}available
+  | pin\ (change|updated|confirmation) | atm\ pin
+  | statement\ is\ (here|ready|available|now) | card\ statement
+  | order\ complete | confirmation\ of | purchase\ from | \breceipt\b
+  | new\ device\ signed\ in | new\ sign.?in | signed\ in\ to\ your | unrecognized\ device
+  | password\ (was\ |has\ been\ )?(updated|reset|changed) | reset\ your\ .{0,20}password
+  | auto.?renewal | renews\ in\ \d | subscription\ renews | membership\ (has\ turned|renewal|is\ set)
+  | security\ update\ for | update\ (any\ )?.{0,20}(app|macos)
+  | verification\ code | secure\ code | one.?time\ (passcode|code)
+  | daily\ .{0,20}limit | limit\ exceeded | request\ limit
+  | weekly\ (report|recap) | \bnewsletter\b | insider | launch\ week | \bdigest\b | \brecap\b
+  | new\ phone\ number\ added | confirm\ your\ email | email\ not\ found
+  | credit\ score | credit\ insight
+  | covered\ by\ spotme | balance\ is\ low | bank\ holiday | isn.?t\ available
+  | privacy\ (notice|policy) | we.?ve\ updated\ our
+  | replacement\ card\ is\ on\ the\ way
+  | share\ your\ feedback | quick\ question\ about
+""")
+
+# HARD keep-list — a star matching ANY of these is NEVER unstarred, no matter
+# what, so aggressive noise-clearing can't touch a real obligation.
+STAR_CRITICAL_KEEP = re.compile(r"""(?ix)
+    nelnet | studentaid | \bloan\b | default | garnish | \bwage
+  | provide\ information | \bkyc\b | et4l
+  | legalzoom
+  | longo | attorney | litigation | discovery | deposition | interrogator
+  | mediation | docusign | subpoena | \bcourt\b | verdict | \bjury\b
+  | plaintiff | defendant | lawsuit | retaliation | \bmdc\b | zapata
+  | taxrise
+  | interview | recruiter | staffing
+  | algora | stage4solutions | ceiamerica | insight | perficient
+  | zafer | saikumar | kharwadkar | \bnaga\b
+  | senator | lanza | constituent | pucciarelli
+  | social\ security\ card | replacement\ social\ security
+  | padavano\.anthony@gmail\.com
+""")
+
+
+def _star_disposition(row):
+    """'keep' | 'unstar'. A CRITICAL match keeps unconditionally; otherwise the
+    conservative classifier's 'archive' verdict OR a transactional/newsletter
+    subject means noise → unstar."""
+    text = f"{row.get('sender', '')}\n{row.get('subject', '')}"
+    if STAR_CRITICAL_KEEP.search(text):
+        return "keep"
+    if row.get("action") == "archive" or STAR_NOISE_SUBJECT.search(row.get("subject", "")):
+        return "unstar"
+    return "keep"
+
+
 def sweep_starred_noise(provider, limit, apply):
     """Drain the RESIDUAL flag pile: stars on threads that may already have left
     the inbox (so the inbox pass never sees them). Classify ``[Gmail]/Starred``
-    with the SAME rules engine and unstar only what the classifier calls noise
-    (action == 'archive'). Protected / keep / fire stay starred — the loan, KYC,
-    recruiter and real-human stars are never touched. Reversible (a ``\\Flagged``
-    bit); this pass never archives or deletes. Fail-soft: if the Gmail Starred
-    virtual mailbox is unavailable (localised name, disabled), skip cleanly."""
+    and unstar noise — the conservative classifier's 'archive' verdict PLUS
+    transactional/resolved/newsletter subjects (receipts, PIN/deposit/statement
+    confirmations, resolved security alerts) that the inbox classifier keeps by
+    sender. A hard CRITICAL keep-list (loan, KYC, litigation, recruiters, SSA
+    card, own sent mail) is NEVER unstarred. Reversible (a ``\\Flagged`` bit);
+    never archives or deletes. Fail-soft if [Gmail]/Starred is unavailable."""
     try:
         rows = classify(provider, STARRED_MAILBOX, limit)
     except Exception as e:
         print(f"  [starred] skipped ({STARRED_MAILBOX} unavailable): {e}")
         return {"available": False, "total": 0, "noise": 0,
                 "unstarred": 0, "unstar_errors": 0, "rows": []}
-    noise = [r for r in rows if r["action"] == "archive"]
+    noise = [r for r in rows if _star_disposition(r) == "unstar"]
     unstarred = err = 0
     if apply:
         for r in noise:

@@ -114,6 +114,82 @@ def _star_disposition(row):
     return "keep"
 
 
+# Every star we KEEP is sorted into its actual matter, so the flag list becomes a
+# navigable index of open loops instead of a heap. Ordered: specific → general,
+# first match wins.
+MATTER_MAP = [
+    ("Open Matters/Litigation", r"longo|\bmdc\b|zapata|docusign|mediation|deposition|interrogator|discovery|subpoena|verdict|\bjury\b|retaliation|plaintiff|defendant|lawsuit|jbfcs|consent\ form"),
+    ("Open Matters/Tax", r"taxrise|\birs\b|tax\ (refund|resolution|debt|return|misdirected)"),
+    ("Open Matters/Student Loan", r"nelnet|studentaid|\bfsa\ id|student\ loan|garnish|loan.*default|dept.*education|department\ of\ education"),
+    ("Open Matters/Identity & KYC", r"\bkyc\b|provide\ information|et4l|legalzoom|id\.me|login\.gov|verify\ your\ identity|registered\ agent"),
+    ("Open Matters/Job Search", r"algora|stage4|ceiamerica|insight\ global|perficient|recruiter|interview|zafer|saikumar|kharwadkar|\bnaga\b|hiring|opportunity|staffing|\brole\b"),
+    ("Open Matters/Government", r"\bssa\b|social\ security|\bdmv\b|flhsmv|passport|senator|lanza|constituent|pucciarelli|\.gov\b"),
+    ("Open Matters/Billing", r"google\ cloud|\bgcp\b|cloudplatform|github.*bill|had\ a\ problem\ billing|billing|godaddy|hostinger|adobe|backblaze|cloudflare|dropbox|parallels|atlassian|overdue|past\ due|payment\ (declined|failed|unsuccessful|overdue)|invoice|subscription.*(suspend|paus)|anthropic|openai"),
+    ("Open Matters/Banking", r"chime|alliant|capital\ one|\bnav\b|santander|cash\ app|amazon.*payment|\bdeposit\b|statement|sezzle|onepay"),
+]
+DEFAULT_MATTER = "Open Matters/Personal"
+_MATTER_RE = [(lbl, re.compile(pat, re.I)) for lbl, pat in MATTER_MAP]
+
+
+def _matter(sender, subject):
+    text = f"{sender} {subject}"
+    for lbl, rx in _MATTER_RE:
+        if rx.search(text):
+            return lbl
+    return DEFAULT_MATTER
+
+
+def _norm_subject(s):
+    """Normalise a subject for de-dup: drop Re:/Fwd:, digits (ticket #s, IDs,
+    dates), punctuation/emoji, so near-identical repeats collapse to one key."""
+    s = (s or "").lower()
+    s = re.sub(r"^\s*(re|fwd|fw):\s*", "", s)
+    s = re.sub(r"\b\w*\d\w*\b", " ", s)      # drop any token with a digit (IDs, ticket#s, dates)
+    s = re.sub(r"[^a-z\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()[:50]
+
+
+def organize_flagged(provider, keepers, apply):
+    """Turn the KEPT flags into an organized index: label each by matter, then
+    collapse duplicate flags — within (matter, sender-domain, normalised-subject)
+    keep only the NEWEST star (highest UID), un-star the redundant older copies
+    (they keep the matter label, so nothing is lost — just de-cluttered). Labels
+    are additive/reversible; un-star is a \\Flagged bit."""
+    for r in keepers:
+        r["matter"] = _matter(r.get("sender", ""), r.get("subject", ""))
+    from collections import Counter
+    matters = Counter(r["matter"] for r in keepers)
+    labeled = label_err = deduped = dedup_err = 0
+    if apply:
+        for r in keepers:
+            if provider.apply_label(r["uid"], r["matter"]):
+                labeled += 1
+            else:
+                label_err += 1
+        groups = {}
+        for r in keepers:
+            dom = (r.get("sender", "").split("@")[-1] or "").strip("> ").lower()
+            groups.setdefault((r["matter"], dom, _norm_subject(r.get("subject", ""))), []).append(r)
+        for grp in groups.values():
+            if len(grp) < 2:
+                continue
+            ordered = sorted(grp, key=lambda x: int(x["uid"]) if str(x["uid"]).isdigit() else 0)
+            for r in ordered[:-1]:            # keep newest starred, un-star the rest
+                if provider.unstar(r["uid"]):
+                    deduped += 1
+                    r["deduped"] = True
+                else:
+                    dedup_err += 1
+    print("  [organize] matters: " + ", ".join(f"{m.split('/')[-1]}={n}"
+                                                for m, n in matters.most_common()))
+    if apply:
+        print(f"  [organize] labeled={labeled} (err={label_err})  "
+              f"duplicate-flags collapsed={deduped} (err={dedup_err})")
+    return {"matters": dict(matters), "labeled": labeled, "label_errors": label_err,
+            "deduped": deduped, "dedup_errors": dedup_err,
+            "distinct_after_dedup": len(keepers) - deduped}
+
+
 def sweep_starred_noise(provider, limit, apply):
     """Drain the RESIDUAL flag pile: stars on threads that may already have left
     the inbox (so the inbox pass never sees them). Classify ``[Gmail]/Starred``
@@ -130,6 +206,7 @@ def sweep_starred_noise(provider, limit, apply):
         return {"available": False, "total": 0, "noise": 0,
                 "unstarred": 0, "unstar_errors": 0, "rows": []}
     noise = [r for r in rows if _star_disposition(r) == "unstar"]
+    keepers = [r for r in rows if _star_disposition(r) == "keep"]
     unstarred = err = 0
     if apply:
         for r in noise:
@@ -141,9 +218,12 @@ def sweep_starred_noise(provider, limit, apply):
                 r["unstarred"] = False
     tail = (f"  UNSTARRED={unstarred} (errors={err})" if apply else "  (dry run)")
     print(f"  [starred] {len(rows)} starred — noise(unstar)={len(noise)}  "
-          f"keep={len(rows) - len(noise)}{tail}")
+          f"keep={len(keepers)}{tail}")
+    # Organize the survivors into matters + collapse duplicate flags.
+    organized = organize_flagged(provider, keepers, apply)
     return {"available": True, "total": len(rows), "noise": len(noise),
-            "unstarred": unstarred, "unstar_errors": err, "rows": rows}
+            "unstarred": unstarred, "unstar_errors": err,
+            "organized": organized, "rows": rows}
 
 
 def main(argv=None):

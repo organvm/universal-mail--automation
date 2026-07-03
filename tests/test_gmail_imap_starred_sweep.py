@@ -14,16 +14,22 @@ import gmail_imap_sweep as sweep
 class FakeProvider:
     def __init__(self, unstar_fail=()):
         self.unstarred = []
+        self.labeled = []          # (uid, label)
         self._fail = set(unstar_fail)
 
     def unstar(self, uid):
         self.unstarred.append(uid)
         return uid not in self._fail
 
+    def apply_label(self, uid, label):
+        self.labeled.append((uid, label))
+        return True
+
 
 def _rows(*specs):
-    # specs: (uid, action)
-    return [{"uid": u, "sender": f"{u}@x", "subject": "s", "action": a,
+    # specs: (uid, action) — distinct sender+subject per uid so the organizer's
+    # duplicate-flag collapse doesn't fire on unrelated synthetic rows.
+    return [{"uid": u, "sender": f"s{u}@d{u}.com", "subject": f"subject {u}", "action": a,
              "label": "", "tier": "", "protected": a != "archive",
              "is_starred": True} for (u, a) in specs]
 
@@ -102,6 +108,57 @@ def test_transactional_and_newsletter_noise_unstars():
     ]
     for r in noise:
         assert sweep._star_disposition(r) == "unstar", r["subject"]
+
+
+# -- matter classification + duplicate-flag collapse --------------------------
+def test_matter_classification():
+    cases = [
+        ("mlongo@longofirm.com", "Deposition summary", "Open Matters/Litigation"),
+        ("legal@taxrise.com", "Refund misdirected", "Open Matters/Tax"),
+        ("nelnetnoreply@nelnet.studentaid.gov", "prevent wage garnishment", "Open Matters/Student Loan"),
+        ("notifications@stripe.com", "Provide information about Et4l", "Open Matters/Identity & KYC"),
+        ("zafer@algora.io", "Air Space Intelligence interview", "Open Matters/Job Search"),
+        ("noreply@reservations.dmv.ny.gov", "Reservation Confirmation", "Open Matters/Government"),
+        ("CloudPlatform-noreply@google.com", "account overdue - Action Required", "Open Matters/Billing"),
+        ("alerts@account.chime.com", "Your Chime Card statement is ready", "Open Matters/Banking"),
+        ("someone@gmail.com", "hey are we still on for lunch", "Open Matters/Personal"),
+    ]
+    for sender, subj, expected in cases:
+        assert sweep._matter(sender, subj) == expected, (sender, subj)
+
+
+def test_norm_subject_collapses_ids_and_dates():
+    assert sweep._norm_subject("Google Cloud account (ID 016B52-CC5865) overdue") == \
+           sweep._norm_subject("Google Cloud account (ID 016B52-CC5865-3BDA82) overdue")
+    assert sweep._norm_subject("Re: TaxRise Ticket Closed – 00059926") == \
+           sweep._norm_subject("TaxRise Ticket Closed – 00063595")
+
+
+def test_organize_labels_all_and_collapses_duplicate_flags():
+    # 3 identical-subject GCP billing flags (diff uids) + 1 distinct loan flag.
+    keepers = [
+        {"uid": "100", "sender": "CloudPlatform-noreply@google.com", "subject": "account 016B52 overdue"},
+        {"uid": "105", "sender": "CloudPlatform-noreply@google.com", "subject": "account 016B52 overdue"},
+        {"uid": "110", "sender": "CloudPlatform-noreply@google.com", "subject": "account 016B52 overdue"},
+        {"uid": "200", "sender": "nelnetnoreply@nelnet.studentaid.gov", "subject": "prevent garnishment"},
+    ]
+    p = FakeProvider()
+    out = sweep.organize_flagged(p, keepers, apply=True)
+    # every keeper got a matter label
+    assert out["labeled"] == 4
+    assert {lbl for _, lbl in p.labeled} == {"Open Matters/Billing", "Open Matters/Student Loan"}
+    # the 3 GCP dupes collapse to 1 flag: the 2 older uids un-starred, newest (110) kept
+    assert out["deduped"] == 2
+    assert set(p.unstarred) == {"100", "105"}
+    assert "110" not in p.unstarred and "200" not in p.unstarred
+
+
+def test_organize_dry_run_touches_nothing():
+    keepers = [{"uid": "1", "sender": "x@taxrise.com", "subject": "case update"}]
+    p = FakeProvider()
+    out = sweep.organize_flagged(p, keepers, apply=False)
+    assert p.labeled == [] and p.unstarred == []
+    assert out["matters"] == {"Open Matters/Tax": 1}
 
 
 def test_end_to_end_unstars_noise_keeps_critical(monkeypatch):

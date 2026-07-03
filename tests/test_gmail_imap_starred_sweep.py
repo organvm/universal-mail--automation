@@ -116,7 +116,7 @@ def test_matter_classification():
         ("mlongo@longofirm.com", "Deposition summary", "Open Matters/Litigation"),
         ("legal@taxrise.com", "Refund misdirected", "Open Matters/Tax"),
         ("nelnetnoreply@nelnet.studentaid.gov", "prevent wage garnishment", "Open Matters/Student Loan"),
-        ("notifications@stripe.com", "Provide information about Et4l", "Open Matters/Identity & KYC"),
+        ("notifications@stripe.com", "Provide information about Et4l", "Open Matters/Identity-KYC"),
         ("zafer@algora.io", "Air Space Intelligence interview", "Open Matters/Job Search"),
         ("noreply@reservations.dmv.ny.gov", "Reservation Confirmation", "Open Matters/Government"),
         ("CloudPlatform-noreply@google.com", "account overdue - Action Required", "Open Matters/Billing"),
@@ -125,6 +125,14 @@ def test_matter_classification():
     ]
     for sender, subj, expected in cases:
         assert sweep._matter(sender, subj) == expected, (sender, subj)
+
+
+def test_no_matter_label_has_imap_breaking_chars():
+    # '&' is the IMAP modified-UTF-7 shift char; a label containing it fails the
+    # X-GM-LABELS STORE (verified live 2026-07-03: 5 KYC labels errored). Keep
+    # every matter label ASCII-safe.
+    for lbl, _ in sweep.MATTER_MAP + [(sweep.DEFAULT_MATTER, None)]:
+        assert "&" not in lbl and lbl.isascii(), lbl
 
 
 def test_norm_subject_collapses_ids_and_dates():

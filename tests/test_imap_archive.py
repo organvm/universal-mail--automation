@@ -89,12 +89,14 @@ def test_gmail_archive_refuses_outside_inbox():
     assert conn.bare_expunge_called is False
 
 
-def test_gmail_archive_refuses_without_uidplus():
-    # No UIDPLUS -> cannot scope the EXPUNGE -> refuse rather than risk a
-    # mailbox-wide expunge of every \Deleted message.
+def test_gmail_archive_proceeds_even_if_uidplus_not_advertised():
+    # Gmail always supports a UID-scoped EXPUNGE, but imaplib's capability tuple
+    # doesn't reliably list UIDPLUS after Gmail login — gating on it refused every
+    # archive (archived=0, archive_errors=193, verified live 2026-07-03). The
+    # Gmail path must NOT depend on that flaky signal; INBOX-only is the guard.
     conn = FakeConn(capabilities=())
-    assert _provider(gmail_ext=True, conn=conn).archive("1") is False
-    assert conn.calls == []
+    assert _provider(gmail_ext=True, conn=conn).archive("1") is True
+    assert conn.cmds() == ["STORE", "EXPUNGE"]
 
 
 def test_gmail_archive_rolls_back_deleted_flag_on_expunge_failure():

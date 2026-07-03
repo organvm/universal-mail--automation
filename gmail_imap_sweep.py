@@ -55,6 +55,40 @@ def classify(provider, mailbox, limit):
     return rows
 
 
+STARRED_MAILBOX = "[Gmail]/Starred"
+
+
+def sweep_starred_noise(provider, limit, apply):
+    """Drain the RESIDUAL flag pile: stars on threads that may already have left
+    the inbox (so the inbox pass never sees them). Classify ``[Gmail]/Starred``
+    with the SAME rules engine and unstar only what the classifier calls noise
+    (action == 'archive'). Protected / keep / fire stay starred — the loan, KYC,
+    recruiter and real-human stars are never touched. Reversible (a ``\\Flagged``
+    bit); this pass never archives or deletes. Fail-soft: if the Gmail Starred
+    virtual mailbox is unavailable (localised name, disabled), skip cleanly."""
+    try:
+        rows = classify(provider, STARRED_MAILBOX, limit)
+    except Exception as e:
+        print(f"  [starred] skipped ({STARRED_MAILBOX} unavailable): {e}")
+        return {"available": False, "total": 0, "noise": 0,
+                "unstarred": 0, "unstar_errors": 0, "rows": []}
+    noise = [r for r in rows if r["action"] == "archive"]
+    unstarred = err = 0
+    if apply:
+        for r in noise:
+            if provider.unstar(r["uid"]):
+                unstarred += 1
+                r["unstarred"] = True
+            else:
+                err += 1
+                r["unstarred"] = False
+    tail = (f"  UNSTARRED={unstarred} (errors={err})" if apply else "  (dry run)")
+    print(f"  [starred] {len(rows)} starred — noise(unstar)={len(noise)}  "
+          f"keep={len(rows) - len(noise)}{tail}")
+    return {"available": True, "total": len(rows), "noise": len(noise),
+            "unstarred": unstarred, "unstar_errors": err, "rows": rows}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Gmail IMAP sweep — archive noise by dropping the INBOX label (dry run by default).")
@@ -65,6 +99,8 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true",
                     help="actually flag/archive (default: dry run, no changes)")
     ap.add_argument("--receipt", default=None, help="path to write the JSON receipt / undo manifest")
+    ap.add_argument("--no-starred", dest="sweep_starred", action="store_false", default=True,
+                    help="skip the residual-star sweep of [Gmail]/Starred (default: also sweep it)")
     args = ap.parse_args(argv)
     if not args.user:
         ap.error("no mailbox configured — set IMAP_USER or pass --user <address>")
@@ -116,6 +152,12 @@ def main(argv=None):
                   f"(errors: flag={ferr} archive={aerr} unstar={uerr})")
         else:
             print("  DRY RUN — no changes. Re-run with --apply to execute.")
+
+        # Residual-star sweep: unstar noise that is starred but already out of the
+        # inbox, so the flag pile fully drains (not just the inbox-resident stars).
+        if args.sweep_starred:
+            result["starred_sweep"] = sweep_starred_noise(
+                provider, args.limit, args.apply)
 
         receipt = args.receipt or os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "audit",

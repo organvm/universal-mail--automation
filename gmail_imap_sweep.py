@@ -84,6 +84,7 @@ def main(argv=None):
                   "mode": "apply" if args.apply else "dry_run", "rows": rows}
         if args.apply:
             flagged = archived = ferr = aerr = 0
+            unstarred = uerr = 0
             for r in rows:
                 if r["action"] == "fire" and not r["is_starred"]:
                     if provider.star(r["uid"]):
@@ -97,10 +98,22 @@ def main(argv=None):
                     else:
                         aerr += 1
                         r["archived"] = False
-            result.update(flagged=flagged, archived=archived,
-                          flag_errors=ferr, archive_errors=aerr)
+                    # Noise leaving the inbox loses its spurious star too, so the
+                    # flag pile converges with the inbox instead of stranding a
+                    # star on every archived newsletter (the "257 flag storm"
+                    # residue). Unstar is a \Flagged STORE — proven to work.
+                    if r["is_starred"]:
+                        if provider.unstar(r["uid"]):
+                            unstarred += 1
+                            r["unstarred"] = True
+                        else:
+                            uerr += 1
+                            r["unstarred"] = False
+            result.update(flagged=flagged, archived=archived, unstarred=unstarred,
+                          flag_errors=ferr, archive_errors=aerr, unstar_errors=uerr)
             print(f"  APPLIED: flagged={flagged}  archived={archived}  "
-                  f"(errors: flag={ferr} archive={aerr})")
+                  f"unstarred={unstarred}  "
+                  f"(errors: flag={ferr} archive={aerr} unstar={uerr})")
         else:
             print("  DRY RUN — no changes. Re-run with --apply to execute.")
 

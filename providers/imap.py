@@ -356,10 +356,56 @@ class IMAPProvider(EmailProvider):
             logger.warning("remove_label not supported for standard IMAP (folder-based)")
             return False
 
+    def _gmail_archive(self, message_id: str) -> bool:
+        """Archive a Gmail message: remove it from INBOX, KEEP it in All Mail.
+
+        Gmail does NOT expose ``\\Inbox`` in X-GM-LABELS, so
+        ``-X-GM-LABELS \\Inbox`` returns OK but archives NOTHING — a silent
+        no-op verified live 2026-07-03 (store OK, message still in inbox; probed
+        methods A/B both no-op, C/E work). The real primitive is ``+FLAGS
+        \\Deleted`` + a UID-scoped EXPUNGE while INBOX is selected: Gmail treats
+        an expunge from a label view as "drop that label", so the message leaves
+        the inbox but survives in All Mail (reversible; never deleted).
+
+        SAFETY — this is a footgun. From ``[Gmail]/All Mail`` or Trash the same
+        two commands PERMANENTLY delete. So refuse unless INBOX is the selected
+        mailbox, and require UIDPLUS so the EXPUNGE is scoped to THIS uid, never
+        mailbox-wide. On EXPUNGE failure, roll the ``\\Deleted`` flag back so a
+        message is never left hidden-but-present."""
+        if self._current_mailbox != "INBOX":
+            logger.error(
+                "gmail archive refused: selected mailbox is %r, not INBOX — a "
+                "\\Deleted+EXPUNGE there would delete, not archive.",
+                self._current_mailbox)
+            return False
+        if not self._server_supports("UIDPLUS"):
+            logger.error(
+                "gmail archive refused: server lacks UIDPLUS; cannot scope the "
+                "EXPUNGE to one message.")
+            return False
+        if not self._checked_store(message_id, "+FLAGS", r"(\Deleted)",
+                                   "flag \\Deleted for gmail archive"):
+            return False
+        try:
+            res, _ = self._connection.uid("EXPUNGE", message_id)
+        except Exception as e:
+            res = None
+            logger.error(f"gmail archive: scoped EXPUNGE raised for {message_id}: {e}")
+        if res != "OK":
+            # Never leave a message flagged \Deleted-but-present (clients hide it).
+            self._connection.uid("STORE", message_id, "-FLAGS", r"(\Deleted)")
+            logger.error(
+                f"gmail archive: scoped EXPUNGE returned {res} for {message_id}; "
+                "rolled back \\Deleted — not archived.")
+            return False
+        return True
+
     def archive(self, message_id: str) -> bool:
         """Archive a message.
 
-        Gmail extensions: drop the ``\\Inbox`` label (a true archive).
+        Gmail extensions: remove from INBOX via ``\\Deleted`` + a UID-scoped
+        EXPUNGE (message stays in All Mail). ``-X-GM-LABELS \\Inbox`` is a silent
+        no-op on Gmail — see _gmail_archive.
 
         Standard IMAP: relocate to the Archive folder, reporting success ONLY
         when the message actually LEFT the source mailbox — via atomic UID MOVE
@@ -371,7 +417,7 @@ class IMAPProvider(EmailProvider):
         recorded ``did_leave_inbox=True`` for a message still in the inbox
         (review U131)."""
         if self.use_gmail_extensions:
-            return self.remove_label(message_id, "\\Inbox")
+            return self._gmail_archive(message_id)
 
         try:
             # Preferred: atomic, server-side UID MOVE. Trust its result and never

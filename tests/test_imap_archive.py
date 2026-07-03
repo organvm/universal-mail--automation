@@ -44,10 +44,11 @@ class FakeConn:
         return [c[0] for c in self.calls]
 
 
-def _provider(gmail_ext=False, conn=None):
+def _provider(gmail_ext=False, conn=None, mailbox="INBOX"):
     p = IMAPProvider(host="imap.example.com", user="u@example.com",
                      password="x", use_gmail_extensions=gmail_ext)  # allow-secret: test literal
     p._connection = conn
+    p._current_mailbox = mailbox
     return p
 
 
@@ -59,17 +60,51 @@ def test_standard_archive_never_calls_mailbox_wide_expunge(caps):
     assert conn.bare_expunge_called is False
 
 
-# -- gmail-extensions path (U086) -------------------------------------------
-def test_gmail_archive_true_when_label_store_ok():
-    conn = FakeConn()
+# -- gmail-extensions archive: \Deleted + scoped UID EXPUNGE -----------------
+# -X-GM-LABELS \Inbox is a SILENT NO-OP on Gmail (verified live 2026-07-03:
+# store OK, message still in inbox — Gmail doesn't expose \Inbox as a label).
+# The real primitive is +FLAGS \Deleted + a UID-scoped EXPUNGE while INBOX is
+# selected; the message leaves the inbox but survives in All Mail.
+def test_gmail_archive_uses_deleted_plus_scoped_expunge():
+    conn = FakeConn(capabilities=("UIDPLUS",))
     assert _provider(gmail_ext=True, conn=conn).archive("1") is True
-    assert conn.cmds() == ["STORE"]            # -X-GM-LABELS \Inbox
+    assert conn.cmds() == ["STORE", "EXPUNGE"]
+    assert ("STORE", "1", "+FLAGS", r"(\Deleted)") in conn.calls
+    assert ("EXPUNGE", "1") in conn.calls        # scoped to the uid
+    assert conn.bare_expunge_called is False
 
 
-def test_gmail_archive_false_when_label_store_rejected():
-    # The STORE was rejected -> archive must NOT claim the inbox label was removed.
-    conn = FakeConn(results={"STORE": "NO"})
+def test_gmail_archive_false_and_no_expunge_when_delete_flag_rejected():
+    conn = FakeConn(capabilities=("UIDPLUS",), results={"STORE": "NO"})
     assert _provider(gmail_ext=True, conn=conn).archive("1") is False
+    assert conn.cmds() == ["STORE"]              # never reached EXPUNGE
+
+
+def test_gmail_archive_refuses_outside_inbox():
+    # From [Gmail]/All Mail, \Deleted+EXPUNGE would DELETE — must refuse, no writes.
+    conn = FakeConn(capabilities=("UIDPLUS",))
+    p = _provider(gmail_ext=True, conn=conn, mailbox="[Gmail]/All Mail")
+    assert p.archive("1") is False
+    assert conn.calls == []                      # no STORE, no EXPUNGE
+    assert conn.bare_expunge_called is False
+
+
+def test_gmail_archive_refuses_without_uidplus():
+    # No UIDPLUS -> cannot scope the EXPUNGE -> refuse rather than risk a
+    # mailbox-wide expunge of every \Deleted message.
+    conn = FakeConn(capabilities=())
+    assert _provider(gmail_ext=True, conn=conn).archive("1") is False
+    assert conn.calls == []
+
+
+def test_gmail_archive_rolls_back_deleted_flag_on_expunge_failure():
+    # \Deleted set but EXPUNGE rejected -> must clear \Deleted so the message is
+    # never left hidden-but-present in the inbox.
+    conn = FakeConn(capabilities=("UIDPLUS",), results={"EXPUNGE": "NO"})
+    assert _provider(gmail_ext=True, conn=conn).archive("1") is False
+    assert ("STORE", "1", "+FLAGS", r"(\Deleted)") in conn.calls
+    assert ("STORE", "1", "-FLAGS", r"(\Deleted)") in conn.calls   # rollback
+    assert conn.bare_expunge_called is False
 
 
 def test_gmail_remove_label_checks_store_result():
@@ -197,15 +232,14 @@ def test_gmail_label_store_payloads_are_correct():
     ]
 
 
-def test_gmail_system_label_is_bare_atom_not_quoted():
-    # Regression (verified live 2026-07-03: 196/196 archive_errors). archive()
-    # drops the \Inbox SYSTEM label; a quoted "\Inbox" is an invalid IMAP quoted
-    # string (\I is not a legal escape) so Gmail replies BAD Could not parse
-    # command and archive silently no-ops under --apply. System labels must be
-    # bare backslash atoms inside the list: (\Inbox), never "\Inbox".
-    conn = FakeConn()
-    assert _provider(gmail_ext=True, conn=conn).archive("7") is True
-    assert conn.calls == [("STORE", "7", "-X-GM-LABELS", r"(\Inbox)")]
+def test_gmail_archive_never_touches_x_gm_labels():
+    # Regression (verified live 2026-07-03): archive must NOT go through
+    # -X-GM-LABELS \Inbox — that is a silent no-op on Gmail (\Inbox isn't a
+    # label). It must use \Deleted + scoped EXPUNGE. Guard that no X-GM-LABELS
+    # command is ever issued by archive().
+    conn = FakeConn(capabilities=("UIDPLUS",))
+    _provider(gmail_ext=True, conn=conn).archive("7")
+    assert not any("X-GM-LABELS" in str(c) for c in conn.calls)
 
 
 def test_gm_label_value_forms():

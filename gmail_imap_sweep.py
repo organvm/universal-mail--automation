@@ -121,7 +121,7 @@ MATTER_MAP = [
     ("Open Matters/Litigation", r"longo|\bmdc\b|zapata|docusign|mediation|deposition|interrogator|discovery|subpoena|verdict|\bjury\b|retaliation|plaintiff|defendant|lawsuit|jbfcs|consent\ form"),
     ("Open Matters/Tax", r"taxrise|\birs\b|tax\ (refund|resolution|debt|return|misdirected)"),
     ("Open Matters/Student Loan", r"nelnet|studentaid|\bfsa\ id|student\ loan|garnish|loan.*default|dept.*education|department\ of\ education"),
-    ("Open Matters/Identity & KYC", r"\bkyc\b|provide\ information|et4l|legalzoom|id\.me|login\.gov|verify\ your\ identity|registered\ agent"),
+    ("Open Matters/Identity-KYC", r"\bkyc\b|provide\ information|et4l|legalzoom|id\.me|login\.gov|verify\ your\ identity|registered\ agent"),
     ("Open Matters/Job Search", r"algora|stage4|ceiamerica|insight\ global|perficient|recruiter|interview|zafer|saikumar|kharwadkar|\bnaga\b|hiring|opportunity|staffing|\brole\b"),
     ("Open Matters/Government", r"\bssa\b|social\ security|\bdmv\b|flhsmv|passport|senator|lanza|constituent|pucciarelli|\.gov\b"),
     ("Open Matters/Billing", r"google\ cloud|\bgcp\b|cloudplatform|github.*bill|had\ a\ problem\ billing|billing|godaddy|hostinger|adobe|backblaze|cloudflare|dropbox|parallels|atlassian|overdue|past\ due|payment\ (declined|failed|unsuccessful|overdue)|invoice|subscription.*(suspend|paus)|anthropic|openai"),

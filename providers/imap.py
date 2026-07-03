@@ -267,6 +267,24 @@ class IMAPProvider(EmailProvider):
             is_read=is_read,
         )
 
+    @staticmethod
+    def _gm_label_value(label: str) -> str:
+        """Format one label as an X-GM-LABELS STORE value (parenthesised list).
+
+        Gmail *system* labels (``\\Inbox``, ``\\Starred``, ``\\Trash``, …) are
+        backslash-prefixed ATOMS and must NOT be quoted: a quoted ``"\\Inbox"``
+        is an invalid IMAP quoted string (``\\I`` is not a legal escape), so
+        Gmail rejects the whole command with ``BAD Could not parse command``.
+        That bug made ``archive()`` a silent 100 %% no-op the first time --apply
+        ran against real Gmail (verified 2026-07-03: 196/196 archive_errors).
+        *User* labels are arbitrary text and MUST be quoted (with any embedded
+        backslash/quote escaped). Both forms go inside a parenthesised list, the
+        documented X-GM-LABELS shape."""
+        if label.startswith("\\"):
+            return f"({label})"
+        escaped = label.replace("\\", "\\\\").replace('"', '\\"')
+        return f'("{escaped}")'
+
     def apply_label(self, message_id: str, label: str) -> bool:
         """
         Add a label to a message.
@@ -276,7 +294,7 @@ class IMAPProvider(EmailProvider):
         """
         if self.use_gmail_extensions:
             return self._checked_store(
-                message_id, "+X-GM-LABELS", f'"{label}"',
+                message_id, "+X-GM-LABELS", self._gm_label_value(label),
                 f"apply Gmail label {label}")
         else:
             # Standard IMAP: copy to folder
@@ -332,7 +350,7 @@ class IMAPProvider(EmailProvider):
             # was rejected, so we must NOT report success (review U086) — else
             # archive() would record the message as having left the inbox.
             return self._checked_store(
-                message_id, "-X-GM-LABELS", f'"{label}"',
+                message_id, "-X-GM-LABELS", self._gm_label_value(label),
                 f"remove Gmail label {label}")
         else:
             logger.warning("remove_label not supported for standard IMAP (folder-based)")

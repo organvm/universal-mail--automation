@@ -186,11 +186,31 @@ def test_store_flag_payloads_are_correct():
 
 
 def test_gmail_label_store_payloads_are_correct():
+    # USER labels are quoted, inside the parenthesised X-GM-LABELS list.
     conn = FakeConn()
     p = _provider(gmail_ext=True, conn=conn)
     p.apply_label("7", "Work/Dev")
     p.remove_label("7", "Work/Dev")
     assert conn.calls == [
-        ("STORE", "7", "+X-GM-LABELS", '"Work/Dev"'),
-        ("STORE", "7", "-X-GM-LABELS", '"Work/Dev"'),
+        ("STORE", "7", "+X-GM-LABELS", '("Work/Dev")'),
+        ("STORE", "7", "-X-GM-LABELS", '("Work/Dev")'),
     ]
+
+
+def test_gmail_system_label_is_bare_atom_not_quoted():
+    # Regression (verified live 2026-07-03: 196/196 archive_errors). archive()
+    # drops the \Inbox SYSTEM label; a quoted "\Inbox" is an invalid IMAP quoted
+    # string (\I is not a legal escape) so Gmail replies BAD Could not parse
+    # command and archive silently no-ops under --apply. System labels must be
+    # bare backslash atoms inside the list: (\Inbox), never "\Inbox".
+    conn = FakeConn()
+    assert _provider(gmail_ext=True, conn=conn).archive("7") is True
+    assert conn.calls == [("STORE", "7", "-X-GM-LABELS", r"(\Inbox)")]
+
+
+def test_gm_label_value_forms():
+    assert IMAPProvider._gm_label_value("\\Inbox") == r"(\Inbox)"
+    assert IMAPProvider._gm_label_value("\\Starred") == r"(\Starred)"
+    assert IMAPProvider._gm_label_value("Work/Dev") == '("Work/Dev")'
+    # a user label containing a quote is escaped, still quoted
+    assert IMAPProvider._gm_label_value('a"b') == '("a\\"b")'

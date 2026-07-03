@@ -378,11 +378,14 @@ class IMAPProvider(EmailProvider):
                 "\\Deleted+EXPUNGE there would delete, not archive.",
                 self._current_mailbox)
             return False
-        if not self._server_supports("UIDPLUS"):
-            logger.error(
-                "gmail archive refused: server lacks UIDPLUS; cannot scope the "
-                "EXPUNGE to one message.")
-            return False
+        # NB: we intentionally do NOT gate on _server_supports("UIDPLUS"). Gmail
+        # always supports UIDPLUS and honours a UID-scoped EXPUNGE (proven live
+        # 2026-07-03 by a probe on the real mailbox), but imaplib's capability
+        # tuple does not reliably list UIDPLUS after Gmail login, so the check
+        # returned False and refused every archive (archived=0, archive_errors=
+        # 193). use_gmail_extensions already implies Gmail, so the scoped
+        # ``UID EXPUNGE`` below is safe; the load-bearing guard is the INBOX-only
+        # check above (which prevents a delete from All Mail/Trash).
         if not self._checked_store(message_id, "+FLAGS", r"(\Deleted)",
                                    "flag \\Deleted for gmail archive"):
             return False

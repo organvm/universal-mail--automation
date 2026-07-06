@@ -175,6 +175,21 @@ _PROTOCOLS: List[ProtocolDef] = [
         "tags": ["money", "legal"],
     },
     {
+        "cls": "subscription-renewal",
+        "match": re.compile(r"(?ix) (paid\s+membership|membership\s+confirmation|"
+                            r"membership\s+begins|membership\s+renewal|"
+                            r"((paid\s+)?membership|subscription|plan) .*"
+                            r"(renew|auto[-\s]*renew|charge|billed)|"
+                            r"(renew|auto[-\s]*renew|charge|billed) .*"
+                            r"((paid\s+)?membership|subscription|plan)|"
+                            r"automatically renew|membership fee)"),
+        "priority": 54, "verify_first": False, "requires_reply": False,
+        "next_step": "Decide whether to keep the recurring subscription before the next "
+                     "renewal date; cancel it if it is not actively useful.",
+        "draft_hint": None,
+        "tags": ["money", "subscription"],
+    },
+    {
         "cls": "domain-renewal",
         "match": re.compile(r"(?ix) (renew to keep|domain .*(expir|renew)|"
                             r"expiring soon|auto[-\s]*renew)"),

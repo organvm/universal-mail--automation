@@ -45,7 +45,9 @@ ACTION_SIGNALS = re.compile(r"""(?ix)
     (fsa\s*id) | (was\s*changed) | (prevent\s*wage) | (take\s*action) | (final\s*reminder) |
     (last\s*chance\s*to\s*stay) | constituent | mediat | docusign | (deletion\s*notice) |
     expiring | (expire\s*soon) | disconnected | (security\s*alert) | suspicious | locked |
-    (past[-\s]*due) | reinstate | (resign) | compliant | consent\s*form | zoom\s*link
+    (past[-\s]*due) | reinstate | (resign) | compliant | consent\s*form | zoom\s*link |
+    (paid\s+membership) | (membership\s+confirmation) | (membership\s+renewal) |
+    (auto[-\s]*renew(al)?) | (automatically\s+renew) | (membership\s+fee)
 """)
 
 # Receipts / marketing / usage-FYI — archive even from protected big brands (reversible).

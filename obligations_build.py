@@ -38,6 +38,7 @@ _CLS_TITLE = {
     "legal-sign": "Legal — document to sign",
     "legal-correspondence": "Legal — correspondence",
     "registered-agent": "Registered agent / LLC",
+    "subscription-renewal": "Subscription renewal",
     "domain-renewal": "Domain renewal",
     "infra-alarm": "Infra alarm (self)",
     "app-update": "App update",
@@ -110,7 +111,8 @@ def build(receipts_dir):
         for r in fires:
             sender = r.get("sender", "")
             subject = r.get("subject", "")
-            ob = derive(sender, subject, r.get("label", ""), r.get("tier", 4))
+            snippet = r.get("snippet") or r.get("body") or r.get("summary") or ""
+            ob = derive(sender, subject, r.get("label", ""), r.get("tier", 4), snippet)
             key = (ob.cls, _domain(sender))
             entry = agg.get(key)
             if entry is None:

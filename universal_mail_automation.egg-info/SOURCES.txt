@@ -59,6 +59,7 @@ core/external_resolver.py
 core/followup_resolver.py
 core/github_resolver.py
 core/historical_intelligence.py
+core/input_validation.py
 core/intake.py
 core/license.py
 core/mail_action_ledger.py
@@ -70,6 +71,7 @@ core/mail_evidence_review.py
 core/mail_history_export.py
 core/mail_resolver_plan.py
 core/mail_resolver_receipt.py
+core/mail_status.py
 core/models.py
 core/ops_summary.py
 core/protocols.py

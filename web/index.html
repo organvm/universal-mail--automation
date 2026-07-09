@@ -1186,6 +1186,7 @@ const SAMPLE_PLANS = [
     monthly_run_cap: 50,
     providers: "gmail",
     blurb: "The full safety floor, free forever. Protected-sender gate plus independent audit receipt, single provider, unlimited dry-runs.",
+    features: ["Protected-sender gate", "Independent audit receipt", "50 runs / mo", "Gmail provider", "Unlimited dry-runs"],
   },
   {
     id: "pro",
@@ -1194,6 +1195,7 @@ const SAMPLE_PLANS = [
     monthly_run_cap: 5000,
     providers: "all",
     blurb: "All four providers, scheduled triage, downloadable and 90-day retained signed receipts.",
+    features: ["Everything in Free", "All four providers", "Scheduled / recurring triage + webhooks", "5,000 runs / mo", "90-day retained signed receipts"],
   },
   {
     id: "business",
@@ -1202,6 +1204,7 @@ const SAMPLE_PLANS = [
     monthly_run_cap: null,
     providers: "all",
     blurb: "Unlimited runs, multi-mailbox, retained receipt history for compliance export, plus MCP and agent-commerce access.",
+    features: ["Everything in Free", "Scheduled / recurring triage + webhooks", "Unlimited runs", "Multi-mailbox", "Compliance receipt export", "MCP server access + ACP agent-commerce surface"],
   },
 ];
 
@@ -1308,7 +1311,7 @@ async function startCheckout(planId, btn) {
   btn.textContent = "Redirecting...";
   const { ok, status, data } = await postJSON("/v1/billing/checkout", { plan: planId, email });
   if (data && data.account_api_key) {
-    try { localStorage.setItem("uma-api-key", data.account_api_key); } catch (e) {}
+    try { localStorage.setItem("uma-pending-key", data.account_api_key); } catch (e) {}
   }
   if (ok && data && data.url) { window.location.href = data.url; return; }
   btn.disabled = false;
@@ -1325,6 +1328,7 @@ function renderPlans(plans, staticCheckout) {
   out.innerHTML = "";
   plans.forEach((p) => {
     const cap = p.monthly_run_cap == null ? "Unlimited runs" : `${Number(p.monthly_run_cap).toLocaleString()} runs / mo`;
+    const featureItems = (p.features || []).map(f => `<li>${escapeHtml(f)}</li>`).join("");
     const card = document.createElement("div");
     card.className = "plan" + (p.id === "pro" ? " feature" : "");
     const buyable = PURCHASABLE[p.id];
@@ -1335,11 +1339,7 @@ function renderPlans(plans, staticCheckout) {
         <summary>Details</summary>
         <div class="plan-reveal-body">
           <div class="blurb">${escapeHtml(p.blurb || "")}</div>
-          <ul>
-            <li>${escapeHtml(cap)}</li>
-            <li>Providers: ${escapeHtml(p.providers || "-")}</li>
-            <li>Gate and receipts</li>
-          </ul>
+          <ul>${featureItems || `<li>${escapeHtml(cap)}</li><li>Providers: ${escapeHtml(p.providers || "-")}</li><li>Gate and receipts</li>`}</ul>
         </div>
       </details>`;
     const btn = document.createElement("button");
@@ -1380,10 +1380,10 @@ function renderPlans(plans, staticCheckout) {
   if (msg && b === "success") {
     let keyHtml = "";
     try {
-      const k = localStorage.getItem("uma-api-key");
+      const k = localStorage.getItem("uma-pending-key");
       if (k) {
-        keyHtml = `<br><br><strong>Important:</strong> Save your API key now. It will not be shown again.<br><code style="user-select: all; display: inline-block; margin-top: 6px; padding: 6px 10px; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: 14px; color: var(--ink);">${escapeHtml(k)}</code>`;
-        localStorage.removeItem("uma-api-key");
+        keyHtml = `<br><br><strong>Important:</strong> Save your API key now. It will not be shown again.<br><div id="api-key-reveal"><code style="user-select: all; display: inline-block; margin-top: 6px; padding: 6px 10px; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: 14px; color: var(--ink);">Authorization: Bearer ${escapeHtml(k)}</code></div>`;
+        localStorage.removeItem("uma-pending-key");
       }
     } catch (e) {}
     msg.innerHTML = `<div class="notice ok">Subscription active. Receipt retention is enabled.${keyHtml}</div>`;

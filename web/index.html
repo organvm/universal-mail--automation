@@ -1339,13 +1339,10 @@ async function startCheckout(planId, btn) {
   btn.disabled = true;
   btn.textContent = "Redirecting...";
   const { ok, status, data } = await postJSON("/v1/billing/checkout", { plan: planId, email });
-  if (ok && data && data.url) {
-    if (data.account_api_key) {
-      try { localStorage.setItem("uma-pending-key", data.account_api_key); } catch (e) { /* private mode */ }
-    }
-    window.location.href = data.url;
-    return;
+  if (data && data.account_api_key) {
+    try { localStorage.setItem("uma-pending-key", data.account_api_key); } catch (e) { /* private mode */ }
   }
+  if (ok && data && data.url) { window.location.href = data.url; return; }
   btn.disabled = false;
   btn.textContent = prev;
   if (status === 503) {
@@ -1418,7 +1415,7 @@ function renderPlans(plans, staticCheckout) {
     try {
       const k = localStorage.getItem("uma-pending-key");
       if (k) {
-        keyBlock = `<div class="api-key-reveal"><p>Your API key — copy it now, it won't be shown again:</p><div class="api-key-row"><input id="apiKeyOut" type="text" readonly value="${escapeHtml(k)}" onclick="this.select()" /><button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('apiKeyOut').value).then(()=>this.textContent='Copied!').catch(()=>{})">Copy</button></div><p class="meta">Pass it as <code>Authorization: Bearer &lt;key&gt;</code> on <code>POST /v1/triage</code>.</p></div>`;
+        keyBlock = `<div class="api-key-reveal"><p>Your API key - copy it now, it won't be shown again:</p><div class="api-key-row"><input id="apiKeyOut" type="text" readonly value="${escapeHtml(k)}" onclick="this.select()" /><button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('apiKeyOut').value).then(()=>this.textContent='Copied!').catch(()=>{})">Copy</button></div><p class="meta">Pass it as <code>Authorization: Bearer &lt;key&gt;</code> on <code>POST /v1/triage</code>.</p></div>`;
         localStorage.removeItem("uma-pending-key");
       }
     } catch (e) { /* private mode */ }

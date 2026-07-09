@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: universal-mail-automation
-Version: 0.1.0
-Summary: Multi-provider inbox triage across Gmail, Outlook, IMAP, and macOS Mail with a shared categorization engine, Eisenhower priority tiers, and time-based escalation.
+Version: 0.2.0
+Summary: Multi-provider inbox triage across Gmail, Outlook, iCloud, and macOS Mail with a shared categorization engine, Eisenhower priority tiers, and time-based escalation.
 Author-email: Anthony <anthony@organvm.org>
 License: MIT
 Project-URL: Homepage, https://github.com/organvm-iii-ergon/universal-mail--automation
@@ -22,29 +22,33 @@ Classifier: Topic :: Utilities
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 License-File: LICENSE
-Requires-Dist: pydantic>=2.0.0
-Requires-Dist: pyyaml>=6.0
+Requires-Dist: pydantic>=2.13.4
+Requires-Dist: pyyaml<7,>=6.0.3
 Requires-Dist: google-api-python-client<3,>=2.197.0
 Requires-Dist: google-auth-httplib2<1,>=0.4.0
 Requires-Dist: google-auth-oauthlib<2,>=1.4.0
 Provides-Extra: outlook
-Requires-Dist: msal>=1.20.0; extra == "outlook"
-Requires-Dist: requests>=2.30.0; extra == "outlook"
+Requires-Dist: msal<2,>=1.37.0; extra == "outlook"
+Requires-Dist: requests<3,>=2.34.2; extra == "outlook"
+Provides-Extra: yaml
+Requires-Dist: pyyaml<7,>=6.0.3; extra == "yaml"
 Provides-Extra: api
-Requires-Dist: fastapi>=0.100.0; extra == "api"
-Requires-Dist: uvicorn>=0.22.0; extra == "api"
+Requires-Dist: fastapi>=0.137.1; extra == "api"
+Requires-Dist: uvicorn[standard]>=0.49.0; extra == "api"
 Requires-Dist: httpx>=0.28.1; extra == "api"
-Requires-Dist: stripe>=10.0.0; extra == "api"
+Requires-Dist: pydantic>=2.13.4; extra == "api"
+Requires-Dist: stripe<16,>=15.2.1; extra == "api"
 Provides-Extra: mcp
-Requires-Dist: mcp>=1.1.2; extra == "mcp"
+Requires-Dist: mcp<2,>=1.27.2; extra == "mcp"
 Provides-Extra: all
-Requires-Dist: msal>=1.20.0; extra == "all"
-Requires-Dist: requests>=2.30.0; extra == "all"
-Requires-Dist: fastapi>=0.100.0; extra == "all"
-Requires-Dist: uvicorn>=0.22.0; extra == "all"
+Requires-Dist: msal<2,>=1.37.0; extra == "all"
+Requires-Dist: requests<3,>=2.34.2; extra == "all"
+Requires-Dist: fastapi>=0.137.1; extra == "all"
+Requires-Dist: uvicorn[standard]>=0.49.0; extra == "all"
 Requires-Dist: httpx>=0.28.1; extra == "all"
-Requires-Dist: stripe>=10.0.0; extra == "all"
-Requires-Dist: mcp>=1.1.2; extra == "all"
+Requires-Dist: stripe<16,>=15.2.1; extra == "all"
+Requires-Dist: mcp<2,>=1.27.2; extra == "all"
+Requires-Dist: pyyaml<7,>=6.0.3; extra == "all"
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.21.0; extra == "dev"

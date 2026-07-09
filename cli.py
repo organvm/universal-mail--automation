@@ -1281,6 +1281,100 @@ def cmd_mail_history_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _default_ops_report_path() -> str:
+    return "~/System/Reports/mail-triage/latest.json"
+
+
+def _default_history_path() -> str:
+    return "~/System/Reports/mail-history/latest.json"
+
+
+def _optional_cli_path(value: Optional[str]) -> Optional[Path]:
+    return Path(value).expanduser() if value else None
+
+
+def cmd_mail_historical_crosswalk(args: argparse.Namespace) -> int:
+    """Emit terminal accounting over every historical mail evidence item."""
+    import json
+
+    from core.mail_status import MailStatusError, build_historical_crosswalk
+
+    raw_history = args.history or os.environ.get("UMA_HISTORICAL_MAIL_PATH")
+    if not raw_history:
+        print("mail-historical-crosswalk: --history or UMA_HISTORICAL_MAIL_PATH is required", file=sys.stderr)
+        return 1
+    raw_ops = args.ops_report or os.environ.get("UMA_OPS_REPORT_PATH")
+    raw_actions = args.action_ledger or os.environ.get("UMA_MAIL_ACTION_LEDGER_PATH") or _default_action_ledger_path()
+    raw_resolver = args.resolver_ledger or os.environ.get("UMA_MAIL_RESOLVER_LEDGER_PATH") or _default_resolver_ledger_path()
+    raw_drafts = args.draft_approvals or os.environ.get("UMA_MAIL_DRAFT_APPROVAL_PATH") or _default_draft_approval_path()
+    raw_delivery = args.delivery_ledger or os.environ.get("UMA_MAIL_DELIVERY_LEDGER_PATH") or _default_delivery_ledger_path()
+
+    try:
+        crosswalk = build_historical_crosswalk(
+            Path(raw_history).expanduser(),
+            ops_report_path=_optional_cli_path(raw_ops),
+            action_ledger_path=_optional_cli_path(raw_actions),
+            resolver_ledger_path=_optional_cli_path(raw_resolver),
+            draft_approval_path=_optional_cli_path(raw_drafts),
+            delivery_path=_optional_cli_path(raw_delivery),
+            stale_days=args.stale_days,
+            max_items=args.max_items,
+        )
+    except MailStatusError as e:
+        print(f"mail-historical-crosswalk: {e.detail}", file=sys.stderr)
+        return 1
+
+    indent = 2 if args.pretty else None
+    print(json.dumps(crosswalk, indent=indent, sort_keys=args.sort_keys))
+    if args.require_reconciled and not (crosswalk.get("kpis") or {}).get("reconciled"):
+        return 2
+    return 0
+
+
+def cmd_mail_status(args: argparse.Namespace) -> int:
+    """Emit the unified UMA mail status receipt."""
+    import json
+
+    from core.mail_status import build_mail_status
+
+    raw_ops = args.ops_report or os.environ.get("UMA_OPS_REPORT_PATH") or _default_ops_report_path()
+    raw_history = args.history or os.environ.get("UMA_HISTORICAL_MAIL_PATH") or _default_history_path()
+    raw_actions = args.action_ledger or os.environ.get("UMA_MAIL_ACTION_LEDGER_PATH") or _default_action_ledger_path()
+    raw_resolver = args.resolver_ledger or os.environ.get("UMA_MAIL_RESOLVER_LEDGER_PATH") or _default_resolver_ledger_path()
+    raw_drafts = args.draft_approvals or os.environ.get("UMA_MAIL_DRAFT_APPROVAL_PATH") or _default_draft_approval_path()
+    raw_delivery = args.delivery_ledger or os.environ.get("UMA_MAIL_DELIVERY_LEDGER_PATH") or _default_delivery_ledger_path()
+
+    status = build_mail_status(
+        ops_report_path=_optional_cli_path(raw_ops),
+        history_path=_optional_cli_path(raw_history),
+        action_ledger_path=_optional_cli_path(raw_actions),
+        resolver_ledger_path=_optional_cli_path(raw_resolver),
+        draft_approval_path=_optional_cli_path(raw_drafts),
+        delivery_path=_optional_cli_path(raw_delivery),
+        stale_days=args.stale_days,
+        max_age_hours=args.max_age_hours,
+        max_items=args.max_items,
+    )
+
+    indent = 2 if args.pretty else None
+    if args.output:
+        output_path = Path(args.output).expanduser()
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(status, indent=indent, sort_keys=args.sort_keys) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as e:
+            print(f"mail-status: could not write output: {e}", file=sys.stderr)
+            return 1
+
+    print(json.dumps(status, indent=indent, sort_keys=args.sort_keys))
+    if args.require_complete and status.get("status") != "ok":
+        return 2
+    return 0
+
+
 def cmd_mail_action_plan(args: argparse.Namespace) -> int:
     """Emit a redacted, approval-aware action plan from intelligence output."""
     import json
@@ -2011,6 +2105,8 @@ Examples:
   %(prog)s ops-refresh --report ~/System/Reports/mail-triage/latest.json
   %(prog)s mail-history-export --source ~/Library/Mail --since 2024-01-01 --until 2026-06-16
   %(prog)s mail-intel --history ~/System/Reports/mail-history/latest.json --ops-report ~/System/Reports/mail-triage/latest.json
+  %(prog)s mail-historical-crosswalk --history ~/System/Reports/mail-history/latest.json --ops-report ~/System/Reports/mail-triage/latest.json
+  %(prog)s mail-status --ops-report ~/System/Reports/mail-triage/latest.json --history ~/System/Reports/mail-history/latest.json
   %(prog)s mail-action-plan --intelligence ~/System/Reports/mail-history/latest-intelligence.json
   %(prog)s mail-resolver-plan --intelligence ~/System/Reports/mail-history/latest-intelligence.json
   %(prog)s mail-provider-surface-plan --intelligence ~/System/Reports/mail-history/latest-intelligence.json
@@ -2512,6 +2608,132 @@ Examples:
         help="Sort JSON object keys for stable diffing",
     )
     mail_history_export_parser.set_defaults(func=cmd_mail_history_export)
+
+    # Historical crosswalk command - terminal accounting over all evidence.
+    mail_crosswalk_parser = subparsers.add_parser(
+        "mail-historical-crosswalk",
+        help="Assign terminal statuses to every historical mail evidence item",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--history",
+        help="Path to historical mail export JSON (defaults to UMA_HISTORICAL_MAIL_PATH)",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--ops-report",
+        help="Optional latest.json ops report used to mark represented_in_ops",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--action-ledger",
+        help="Optional JSONL action receipt ledger",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--resolver-ledger",
+        help="Optional JSONL resolver receipt ledger",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--draft-approvals",
+        help="Optional JSONL draft approval receipt ledger",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--delivery-ledger",
+        help="Optional JSONL delivery receipt ledger",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--stale-days",
+        type=int,
+        default=14,
+        help="Minimum age for stale missed-lead candidates (default: 14)",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--max-items",
+        type=int,
+        default=100,
+        help="Maximum crosswalk items to include while keeping full counts (default: 100)",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--require-reconciled",
+        action="store_true",
+        help="Exit 2 if source messages do not reconcile to terminal statuses plus exclusions",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output",
+    )
+    mail_crosswalk_parser.add_argument(
+        "--sort-keys",
+        action="store_true",
+        help="Sort JSON object keys for stable diffing",
+    )
+    mail_crosswalk_parser.set_defaults(func=cmd_mail_historical_crosswalk)
+
+    # Unified status command - public-safe UMA mail receipt.
+    mail_status_parser = subparsers.add_parser(
+        "mail-status",
+        help="Emit the unified UMA mail status receipt",
+    )
+    mail_status_parser.add_argument(
+        "--ops-report",
+        help="Path to latest.json ops report (defaults to UMA_OPS_REPORT_PATH or user report path)",
+    )
+    mail_status_parser.add_argument(
+        "--history",
+        help="Path to historical mail export JSON (defaults to UMA_HISTORICAL_MAIL_PATH or user report path)",
+    )
+    mail_status_parser.add_argument(
+        "--action-ledger",
+        help="Optional JSONL action receipt ledger",
+    )
+    mail_status_parser.add_argument(
+        "--resolver-ledger",
+        help="Optional JSONL resolver receipt ledger",
+    )
+    mail_status_parser.add_argument(
+        "--draft-approvals",
+        help="Optional JSONL draft approval receipt ledger",
+    )
+    mail_status_parser.add_argument(
+        "--delivery-ledger",
+        help="Optional JSONL delivery receipt ledger",
+    )
+    mail_status_parser.add_argument(
+        "--stale-days",
+        type=int,
+        default=14,
+        help="Minimum age for stale missed-lead candidates (default: 14)",
+    )
+    mail_status_parser.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=None,
+        help="Freshness threshold for the ops report (default: 12)",
+    )
+    mail_status_parser.add_argument(
+        "--max-items",
+        type=int,
+        default=100,
+        help="Maximum queue/crosswalk items to include while keeping full counts (default: 100)",
+    )
+    mail_status_parser.add_argument(
+        "--output",
+        help="Optional path to write the redacted status receipt",
+    )
+    mail_status_parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="Exit 2 if the status is not ok",
+    )
+    mail_status_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output",
+    )
+    mail_status_parser.add_argument(
+        "--sort-keys",
+        action="store_true",
+        help="Sort JSON object keys for stable diffing",
+    )
+    mail_status_parser.set_defaults(func=cmd_mail_status)
 
     # Action plan command - redacted next-action reducer over intelligence.
     mail_action_plan_parser = subparsers.add_parser(

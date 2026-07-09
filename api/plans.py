@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+import time
 
 # Sentinel for "no cap" — distinct from 0, which would mean "no runs allowed".
 UNLIMITED = None
@@ -175,14 +176,20 @@ def plan_id_for_price(price_id: Optional[str]) -> Optional[str]:
 def entitlements_for(account: Optional[dict]) -> dict:
     """Resolve the effective limits for an account (or the Free floor if None).
 
-    A non-active subscription (past_due / canceled / unpaid) is downgraded to the
-    Free floor — we never honor paid limits for an unpaid account, but the safety
-    gate stays fully on regardless."""
+    A non-active or expired subscription (past_due / canceled / unpaid / ended)
+    is downgraded to the Free floor — we never honor paid limits for an
+    non-paying account, but the safety gate stays fully on regardless."""
     if not account:
         plan = PLANS[DEFAULT_PLAN_ID]
     else:
         status = (account.get("status") or "active").lower()
         active = status in ("active", "trialing")
+        period_end = account.get("current_period_end")
+        if active and period_end is not None:
+            try:
+                active = int(period_end) > int(time.time())
+            except (TypeError, ValueError):
+                active = False
         plan = plan_for(account.get("plan")) if active else PLANS[DEFAULT_PLAN_ID]
     return {
         "plan": plan.id,

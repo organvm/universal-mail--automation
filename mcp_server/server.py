@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import os
+from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.streamable_http import TransportSecuritySettings
@@ -98,6 +99,65 @@ from core.input_validation import (
 logger = logging.getLogger(__name__)
 
 
+_DEFAULT_LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
+_MCP_QUERY_MAX_CHARS = 2048
+_MCP_PROVIDER_MAX_CHARS = 64
+_MCP_REMOVE_LABEL_MAX_CHARS = 512
+
+
+def _normalize_host(raw_host: str) -> Optional[str]:
+    """Normalize one host entry for MCP allowed-host configuration.
+
+    Accepts plain hosts (with optional :port) or scheme-qualified hosts like
+    ``https://tenant.example.com`` and extracts the host token safely.
+    """
+    host_candidate = raw_host.strip()
+    if not host_candidate:
+        return None
+
+    parsed = urlsplit(host_candidate if "://" in host_candidate else f"//{host_candidate}")
+    if parsed.scheme:
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        if parsed.path or parsed.query or parsed.fragment:
+            return None
+        host_candidate = parsed.netloc
+    else:
+        # For //style parse, an invalid host like "a/b" sets a path fragment.
+        if parsed.path and parsed.netloc:
+            return None
+        if parsed.query or parsed.fragment:
+            return None
+        host_candidate = parsed.netloc or parsed.path
+
+    if not host_candidate:
+        return None
+    if " " in host_candidate or "?" in host_candidate or "#" in host_candidate:
+        return None
+    if "@" in host_candidate:
+        return None
+
+    return host_candidate.lower()
+
+
+def _host_entries(raw: str) -> list[str]:
+    hosts: list[str] = []
+    seen: set[str] = set()
+    for raw_host in raw.split(","):
+        normalized = _normalize_host(raw_host)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        hosts.append(normalized)
+    return hosts
+
+
+def _clamp_text(value: Optional[str], *, max_chars: int) -> Optional[str]:
+    if value is None:
+        return None
+    return value[:max_chars]
+
+
 def _transport_security() -> TransportSecuritySettings:
     """DNS-rebinding protection for the hosted Streamable HTTP endpoint.
 
@@ -109,8 +169,15 @@ def _transport_security() -> TransportSecuritySettings:
     raw = os.environ.get("MCP_ALLOWED_HOSTS", "").strip()
     if raw == "*":
         return TransportSecuritySettings(enable_dns_rebinding_protection=False)
-    hosts = [h.strip() for h in raw.split(",") if h.strip()]
-    hosts += ["localhost", "127.0.0.1", "localhost:8000", "127.0.0.1:8000"]
+    hosts = _host_entries(raw)
+    if not hosts:
+        logger.debug("MCP_ALLOWED_HOSTS is unset or empty; falling back to local defaults")
+    for loopback_host in _DEFAULT_LOOPBACK_HOSTS:
+        loopback_with_port = f"{loopback_host}:8000"
+        if loopback_host not in hosts:
+            hosts.append(loopback_host)
+        if loopback_with_port not in hosts:
+            hosts.append(loopback_with_port)
     origins = [f"http://{h}" for h in hosts] + [f"https://{h}" for h in hosts]
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
@@ -199,6 +266,8 @@ def triage_preview(
 ) -> TriageResponse:
     """Dry-run a triage: return the disposition counts + audit receipt, touch
     NOTHING in the mailbox. Requires the server to hold mailbox credentials."""
+    provider = _clamp_text(provider, max_chars=_MCP_PROVIDER_MAX_CHARS) or ""
+    query = _clamp_text(query, max_chars=_MCP_QUERY_MAX_CHARS) or ""
     return _triage(provider, query, limit, dry_run=True, remove_label=None,
                    tier_routing=False, vip_only=False)
 
@@ -220,6 +289,11 @@ def triage(
     FAIL-CLOSED: if the independent audit proves a protected sender left the inbox,
     this raises (the run is rejected) rather than reporting success.
     """
+    provider = _clamp_text(provider, max_chars=_MCP_PROVIDER_MAX_CHARS) or ""
+    query = _clamp_text(query, max_chars=_MCP_QUERY_MAX_CHARS) or ""
+    remove_label = _clamp_text(
+        remove_label, max_chars=_MCP_REMOVE_LABEL_MAX_CHARS
+    )
     return _triage(provider, query, limit, dry_run=dry_run, remove_label=remove_label,
                    tier_routing=tier_routing, vip_only=vip_only,
                    account_api_key=account_api_key)

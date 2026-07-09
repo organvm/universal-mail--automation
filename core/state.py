@@ -8,6 +8,7 @@ of interrupted runs.
 import json
 import logging
 import os
+import tempfile
 from collections import defaultdict
 from typing import Any, Dict, Optional
 from datetime import datetime
@@ -88,11 +89,24 @@ class StateManager:
         if provider:
             self.state["provider"] = provider
 
+        directory = os.path.dirname(self.filename) or "."
+        tmp_path = None
         try:
-            with open(self.filename, "w") as f:
+            with tempfile.NamedTemporaryFile(
+                "w", dir=directory, delete=False, prefix=".state.", suffix=".tmp"
+            ) as f:
+                tmp_path = f.name
                 json.dump(self.state, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.filename)
         except Exception as e:
             logger.error(f"Failed to save state to {self.filename}: {e}")
+            if tmp_path is not None and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
 
     def get_token(self) -> Optional[str]:
         """Get the saved page token for resumption."""

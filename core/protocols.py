@@ -90,6 +90,13 @@ def _looks_human(sender: str) -> bool:
 _BULK_HEADER_KEYS = ("list-unsubscribe", "list-id", "list-post")
 _PRECEDENCE_BULK = re.compile(r"(?i)\b(bulk|list|junk|auto[_\-]?reply|auto[_\-]?submitted)\b")
 
+# The exact header field NAMES a provider must capture at list time for the bulk gate to
+# fire. Single source of truth so the fetch layer (providers) and the classifier stay in
+# lockstep — a provider grabs only these (never whole bodies), keeping the fetch cheap.
+BULK_SIGNAL_HEADERS = (
+    "List-Unsubscribe", "List-Id", "List-Post", "Precedence", "Auto-Submitted",
+)
+
 
 def _normalize_headers(headers: Union[str, "Mapping[str, Any]", None]) -> dict:
     """Coerce headers (a raw RFC-822 header block, or a name→value mapping) into a

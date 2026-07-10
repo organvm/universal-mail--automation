@@ -80,7 +80,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install build tooling
-        run: python -m pip install --upgrade pip build twine wheel
+        run: python -m pip install --upgrade pip build twine wheel "setuptools>=68"
 
       - name: Build distributions
         run: python -m build --no-isolation

@@ -83,6 +83,7 @@ core/state.py
 core/triage.py
 core/unsubscribe.py
 core/voice.py
+core/vox_transport.py
 mcp_server/__init__.py
 mcp_server/__main__.py
 mcp_server/server.py

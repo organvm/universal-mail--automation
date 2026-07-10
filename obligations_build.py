@@ -44,6 +44,7 @@ _CLS_TITLE = {
     "app-update": "App update",
     "precedent": "Personal — reply owed",
     "exploration": "Needs review",
+    "bulk": "Bulk / list mail (no reply owed)",
 }
 
 # His-hand levers — surfaced as known/owned (never forced). Mirrors the cascade memory.
@@ -112,7 +113,12 @@ def build(receipts_dir):
             sender = r.get("sender", "")
             subject = r.get("subject", "")
             snippet = r.get("snippet") or r.get("body") or r.get("summary") or ""
-            ob = derive(sender, subject, r.get("label", ""), r.get("tier", 4), snippet)
+            # Bulk-mail headers (List-Unsubscribe / List-Id / Precedence: bulk) suppress the
+            # personal reply-owed precedent rung. Accept whichever header field the receipt
+            # carries (raw block or mapping); absent → no suppression (fail-open).
+            headers = r.get("headers") or r.get("raw_headers")
+            ob = derive(sender, subject, r.get("label", ""), r.get("tier", 4), snippet,
+                        headers=headers)
             key = (ob.cls, _domain(sender))
             entry = agg.get(key)
             if entry is None:

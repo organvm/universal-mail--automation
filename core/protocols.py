@@ -27,7 +27,7 @@ Design notes:
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, TypedDict
+from typing import Any, List, Mapping, Optional, TypedDict, Union
 
 class ProtocolDef(TypedDict):
     cls: str
@@ -78,6 +78,59 @@ def _looks_human(sender: str) -> bool:
                    ("via", "inc", "llc", "bank", "card", "health", "deals", "store",
                     "finance", "co.", "labs", "group", "platform", "pbc"))
     return len(parts) >= 2 and not name.isupper() and "@" not in name and not brandish
+
+
+# RFC 2369 / RFC 3834 / RFC 5322 bulk-mail markers. Their PRESENCE (any of them) means
+# the message was emitted by a mailing list / bulk sender / auto-responder — by definition
+# NOT a personal message, so NO personal reply is ever owed. This is the header-based,
+# provider-agnostic rule that replaces sender-name guessing for the newsletter/transactional
+# storm: `List-Unsubscribe` and `List-Id` mark list/bulk mail; `Precedence: bulk|list|junk|
+# auto_reply` marks bulk/automated mail; `Auto-Submitted` (RFC 3834, anything but "no") marks
+# an auto-generated message. The raw header VALUES never steer a real action — only presence.
+_BULK_HEADER_KEYS = ("list-unsubscribe", "list-id", "list-post")
+_PRECEDENCE_BULK = re.compile(r"(?i)\b(bulk|list|junk|auto[_\-]?reply|auto[_\-]?submitted)\b")
+
+
+def _normalize_headers(headers: Union[str, "Mapping[str, Any]", None]) -> dict:
+    """Coerce headers (a raw RFC-822 header block, or a name→value mapping) into a
+    lower-cased {name: value} dict. Fail-open: unparseable input → {} (no suppression)."""
+    if not headers:
+        return {}
+    if isinstance(headers, Mapping):
+        return {str(k).strip().lower(): str(v) for k, v in headers.items()}
+    out: dict = {}
+    # Raw header block: fold RFC 5322 continuation lines (leading whitespace), then split
+    # each logical line at the first colon. Later duplicates win (harmless for presence).
+    logical: List[str] = []
+    for line in str(headers).splitlines():
+        if line[:1] in (" ", "\t") and logical:
+            logical[-1] += " " + line.strip()
+        else:
+            logical.append(line)
+    for line in logical:
+        if ":" in line:
+            name, _, val = line.partition(":")
+            out[name.strip().lower()] = val.strip()
+    return out
+
+
+def is_bulk_mail(headers: Union[str, "Mapping[str, Any]", None]) -> bool:
+    """True when the message carries standard bulk/list/auto-response headers — i.e. it was
+    sent to a list or by a machine, never as a personal message. Header-based and
+    domain-agnostic: no sender allow/block list. Absent headers → False (fail-open: an
+    unheadered message falls through to the normal precedent/exploration cascade)."""
+    hdrs = _normalize_headers(headers)
+    if not hdrs:
+        return False
+    if any(k in hdrs for k in _BULK_HEADER_KEYS):
+        return True
+    prec = hdrs.get("precedence", "")
+    if prec and _PRECEDENCE_BULK.search(prec):
+        return True
+    auto = hdrs.get("auto-submitted", "").strip().lower()
+    if auto and auto != "no":
+        return True
+    return False
 
 
 # Each protocol: a class id, a matcher over "sender subject snippet", a consequence
@@ -223,8 +276,16 @@ _PROTOCOLS: List[ProtocolDef] = [
 
 
 def derive(sender: str, subject: str, label: str = "", tier: int = 4,
-           snippet: str = "") -> Obligation:
-    """Run the cascade for one surfaced fire and return its owned next step."""
+           snippet: str = "",
+           headers: Union[str, "Mapping[str, Any]", None] = None) -> Obligation:
+    """Run the cascade for one surfaced fire and return its owned next step.
+
+    ``headers`` (optional) is the message's raw header block or a name→value mapping. A
+    consequential PROTOCOL always wins first (a billing/fraud/legal notice matters even when
+    it rides a list). Below the protocols, bulk/list/auto headers HARD-SUPPRESS the personal
+    precedent rung: a newsletter or transactional receipt is never a personal reply owed,
+    however human its From name looks. Absent headers → the cascade is unchanged (fail-open).
+    """
     hay = f"{sender} {subject} {snippet} {label}"
 
     for p in _PROTOCOLS:
@@ -235,6 +296,21 @@ def derive(sender: str, subject: str, label: str = "", tier: int = 4,
                 verify_first=p["verify_first"], requires_reply=p["requires_reply"],
                 draft_hint=p["draft_hint"], tags=list(p["tags"]),
             )
+
+    # Bulk gate — sits ABOVE precedent: standard list/bulk/auto headers mean the message was
+    # sent to a list or by a machine, so no personal reply is owed. This is the root-cause fix
+    # for the newsletter/transactional storm that a First-Last display name used to smuggle
+    # through the precedent rung. Header-based and domain-agnostic — never a sender blocklist.
+    if is_bulk_mail(headers):
+        return Obligation(
+            cls="bulk", rung="bulk", priority=20,
+            next_step="Bulk/list/automated mail — no personal reply owed. Unsubscribe or "
+                      "filter it if it's noise; otherwise ignore.",
+            why="bulk: message carries list/bulk/auto headers (List-Unsubscribe / List-Id / "
+                "Precedence: bulk), so it is not a personal reply owed",
+            requires_reply=False,
+            tags=["bulk", "no-reply"],
+        )
 
     # Rung 2 — PRECEDENT: a real human wrote; a person is owed a human reply.
     if _looks_human(sender):

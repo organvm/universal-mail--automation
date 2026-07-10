@@ -183,12 +183,18 @@ def classify_inbox(provider, inbox_name, limit):
             sender, subject = m.sender or "", m.subject or ""
             protected = is_protected_sender(sender)
             cat = categorize_with_tier(sender, subject)
-            rows.append({
+            row = {
                 "id": m.id, "sender": sender, "subject": subject,
                 "is_read": m.is_read, "is_flagged": m.is_starred,
                 "label": cat.label, "tier": cat.tier, "protected": protected,
                 "action": decide(sender, subject, cat.tier, protected, cat.label),
-            })
+            }
+            # Persist the bulk-signal headers (List-Unsubscribe / List-Id / Precedence …)
+            # captured at fetch time so obligations_build can suppress bulk mail from the
+            # reply-owed rung end-to-end. Omitted when the provider supplied none (fail-open).
+            if getattr(m, "headers", None):
+                row["headers"] = dict(m.headers)
+            rows.append(row)
         fetched += len(res.messages)
         page_token = res.next_page_token
         if not page_token:

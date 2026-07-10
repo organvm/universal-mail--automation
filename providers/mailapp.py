@@ -18,8 +18,29 @@ from providers.base import (
     ListMessagesResult,
 )
 from core.models import EmailMessage, LabelAction, ProcessingResult
+from core.protocols import BULK_SIGNAL_HEADERS
 
 logger = logging.getLogger(__name__)
+
+# In-band delimiters for the AppleScript pseudo-JSON transport. Chosen from the C0 control
+# range so they can never collide with a header value, subject, or sender. FIELD_SEP splits
+# the per-message tuple columns; HDR_SEP splits captured "name: value" header lines within
+# the single headers column (a raw header block's own newlines would break the row protocol).
+_FIELD_SEP = "\x1f"   # unit separator — between columns
+_HDR_SEP = "\x1e"     # record separator — between header lines in the headers column
+
+
+def _parse_bulk_headers(blob: str) -> Dict[str, str]:
+    """Parse the captured bulk-header column (``name: value`` lines joined by ``_HDR_SEP``)
+    into a lower-cased {name: value} map. Fail-open: empty/garbage → {}."""
+    out: Dict[str, str] = {}
+    for line in (blob or "").split(_HDR_SEP):
+        if ":" in line:
+            name, _, val = line.partition(":")
+            name = name.strip().lower()
+            if name:
+                out[name] = val.strip()
+    return out
 
 
 class MailAppProvider(EmailProvider):
@@ -132,7 +153,17 @@ class MailAppProvider(EmailProvider):
         if self.account:
             account_filter = f'of account "{self.account}"'
 
+        # AppleScript list of the bulk-signal header names to keep (lower-cased for the
+        # prefix match). Only these lines survive — no body is ever fetched, so a message
+        # carrying List-Unsubscribe et al. is detectable at classification time cheaply.
+        bulk_keys_as = "{" + ", ".join(
+            f'"{h.lower()}:"' for h in BULK_SIGNAL_HEADERS
+        ) + "}"
+
         script = f'''
+        set fieldSep to (ASCII character 31)
+        set hdrSep to (ASCII character 30)
+        set bulkKeys to {bulk_keys_as}
         tell application "Mail"
             set msgList to {{}}
             set msgCount to 0
@@ -156,8 +187,31 @@ class MailAppProvider(EmailProvider):
                 set msgRead to read status of msg
                 set msgFlagged to flagged status of msg
 
-                -- Output as pseudo-JSON (tab-separated for parsing)
-                set msgInfo to (msgId as string) & "\\t" & msgSender & "\\t" & msgSubject & "\\t" & (msgRead as string) & "\\t" & (msgFlagged as string)
+                -- Capture ONLY the bulk-signal header lines (never the body). `all headers`
+                -- is already resident on the message object, so this pulls no extra content.
+                set bulkHdrs to ""
+                try
+                    set hdrText to all headers of msg
+                    set keptLines to {{}}
+                    repeat with para in (paragraphs of hdrText)
+                        set ln to (para as string)
+                        if ln is not "" then
+                            set lnLower to my toLower(ln)
+                            repeat with k in bulkKeys
+                                if lnLower starts with (k as string) then
+                                    set end of keptLines to ln
+                                    exit repeat
+                                end if
+                            end repeat
+                        end if
+                    end repeat
+                    set AppleScript's text item delimiters to hdrSep
+                    set bulkHdrs to (keptLines as string)
+                    set AppleScript's text item delimiters to ""
+                end try
+
+                -- Output as pseudo-JSON (unit-separator-delimited columns for parsing)
+                set msgInfo to (msgId as string) & fieldSep & msgSender & fieldSep & msgSubject & fieldSep & (msgRead as string) & fieldSep & (msgFlagged as string) & fieldSep & bulkHdrs
                 set end of msgList to msgInfo
                 set msgCount to msgCount + 1
             end repeat
@@ -166,6 +220,22 @@ class MailAppProvider(EmailProvider):
             set AppleScript's text item delimiters to linefeed
             return (msgList as string) & "\\n---TOTAL:" & (totalMsgs as string)
         end tell
+
+        on toLower(s)
+            set upperChars to "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            set lowerChars to "abcdefghijklmnopqrstuvwxyz"
+            set outp to ""
+            repeat with c in (characters of s)
+                set c to (c as string)
+                set oset to (offset of c in upperChars)
+                if oset > 0 then
+                    set outp to outp & (character oset of lowerChars)
+                else
+                    set outp to outp & c
+                end if
+            end repeat
+            return outp
+        end toLower
         '''
 
         try:
@@ -185,15 +255,17 @@ class MailAppProvider(EmailProvider):
             if not line.strip():
                 continue
 
-            parts = line.split("\t")
+            parts = line.split(_FIELD_SEP)
             if len(parts) >= 5:
                 msg_id, sender, subject, is_read, is_flagged = parts[:5]
+                bulk_blob = parts[5] if len(parts) >= 6 else ""
                 messages.append(EmailMessage(
                     id=msg_id,
                     sender=sender,
                     subject=subject,
                     is_read=is_read.lower() == "true",
                     is_starred=is_flagged.lower() == "true",
+                    headers=_parse_bulk_headers(bulk_blob),
                 ))
 
         # Calculate next page token

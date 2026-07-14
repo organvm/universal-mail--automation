@@ -538,3 +538,67 @@ class IMAPProvider(EmailProvider):
         msg["Subject"] = subj if subj.lower().startswith("re:") else f"Re: {subj}".strip()
         msg.set_content(body or "")
         return self.append(msg.as_bytes(), "[Gmail]/Drafts")
+
+    @staticmethod
+    def _norm_subject(subject: str) -> str:
+        """Strip repeated ``Re:``/``Fwd:``/``Fw:`` prefixes down to the bare
+        subject stem, so an inbound message ("Foo") and its reply ("Re: Foo")
+        match the same thread when searched by SUBJECT."""
+        s = (subject or "").strip()
+        low = s.lower()
+        while True:
+            for p in ("re:", "fwd:", "fw:"):
+                if low.startswith(p):
+                    s = s[len(p):].strip()
+                    low = s.lower()
+                    break
+            else:
+                break
+        return s
+
+    def _search_mailbox(self, mailbox: str, to_addr: str, subject: str) -> bool:
+        """True iff ``mailbox`` holds ≥1 message ``TO`` ``to_addr`` whose SUBJECT
+        contains the (Re:-stripped) ``subject`` stem.
+
+        FAIL-OPEN by design: any error, non-OK response, or empty subject/addr
+        returns ``False`` (→ "not handled" → the caller still drafts). Wrongly
+        suppressing a genuine reply-owed draft is worse than a possible
+        duplicate, so the safe default on uncertainty is to draft. SELECT is
+        read-only — this method never mutates the mailbox."""
+        stem = self._norm_subject(subject)
+        if not to_addr or not stem:
+            return False
+        try:
+            res, _ = self._connection.select(mailbox, readonly=True)
+            if res != "OK":
+                return False
+            self._current_mailbox = mailbox
+            typ, data = self._connection.uid(
+                "search", None, "TO", f'"{to_addr}"', "SUBJECT", f'"{stem}"')
+            if typ != "OK" or not data or not data[0]:
+                return False
+            return bool(data[0].split())
+        except Exception as e:  # noqa: BLE001 — fail-open (see docstring)
+            logger.debug(f"handled-check search in {mailbox} failed: {e}")
+            return False
+
+    def thread_already_handled(self, to_addr: str, subject: str,
+                               sent_mailbox: Optional[str] = None,
+                               drafts_mailbox: str = "[Gmail]/Drafts") -> bool:
+        """Server-truth reconciliation: is this reply-owed thread ALREADY handled?
+
+        Returns True iff a reply to ``to_addr`` with this subject stem already
+        exists in the Sent folder (the operator already answered) OR a draft
+        already exists in Drafts (dedup). The draft leaf calls this before every
+        APPEND to skip both already-answered threads and duplicate drafts — the
+        fix for stale/triplicate drafts. It keys on the SERVER's own state, so
+        it is robust where the local ``drafts_created.json`` idempotency file is
+        not: a lost/reset state file, or one sender reachable at two addresses
+        (which produce two different domain-keyed idempotency keys and so slip
+        past local dedup — exactly how three copies of one legal reply were
+        created). FAIL-OPEN throughout (see ``_search_mailbox``)."""
+        self.connect()  # idempotent
+        sent = sent_mailbox or os.getenv("LIMEN_MAIL_SENT_MAILBOX", "[Gmail]/Sent Mail")
+        if self._search_mailbox(sent, to_addr, subject):
+            return True
+        return self._search_mailbox(drafts_mailbox, to_addr, subject)

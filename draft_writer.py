@@ -68,7 +68,7 @@ def compose(profile, ob, name: str) -> str:
 
 
 def _select_saver(save: bool):
-    """Choose the draft-save transport and return ``(save_fn, close_fn)``.
+    """Choose the draft-save transport and return ``(save_fn, close_fn, handled_fn)``.
 
     Prefers the KEYED, HEADLESS IMAP APPEND path (``IMAPProvider.create_draft`` →
     ``[Gmail]/Drafts``) whenever the Gmail app-password is hydrated in the env
@@ -78,9 +78,14 @@ def _select_saver(save: bool):
     unchanged). Either way nothing is ever sent — both transports only write a Draft.
 
     ``save_fn(to_addr, subject, body, account=None) -> bool``; ``close_fn`` (or None)
-    releases the keyed connection at the end. Returns ``(None, None)`` for enrich-only."""
+    releases the keyed connection at the end; ``handled_fn(to_addr, subject) -> bool``
+    (or None) is the server-truth reconciliation check — True when a reply already
+    exists in Sent or a draft already exists in Drafts, so the caller skips it (the
+    fix for stale/triplicate drafts). Only the keyed IMAP path can see Sent/Drafts on
+    the server, so ``handled_fn`` is None for the AppleScript and enrich-only paths.
+    Returns ``(None, None, None)`` for enrich-only."""
     if not save:
-        return None, None
+        return None, None, None
 
     user = os.environ.get("IMAP_USER") or os.environ.get("GMAIL_USER")
     pw = os.environ.get("IMAP_PASS") or os.environ.get("GMAIL_APP_PASSWORD")
@@ -98,8 +103,11 @@ def _select_saver(save: bool):
                 except Exception:  # noqa: BLE001 — cleanup must never raise into the beat
                     pass
 
+            def _handled(to_addr, subject):
+                return prov.thread_already_handled(to_addr, subject)
+
             print("draft_writer: keyed IMAP draft path (headless — no Automation grant)")
-            return _save, _close
+            return _save, _close, _handled
         except Exception as e:  # pragma: no cover — import/construct guard, fail-open below
             print(f"draft_writer: IMAP keyed path unavailable ({e}); falling back to Apple Mail")
 
@@ -110,10 +118,10 @@ def _select_saver(save: bool):
             return MailAppProvider(account=account).create_draft(
                 to_addr, subject, body, account=account)
 
-        return _save, None
+        return _save, None, None
     except Exception as e:  # pragma: no cover
         print(f"draft_writer: MailApp unavailable ({e}); enrich-only")
-        return None, None
+        return None, None, None
 
 
 def _load_state():
@@ -150,9 +158,9 @@ def main(argv=None):
     profile = load_voice_profile(name=args.name)
     obligations = ledger.get("obligations", [])
     state = _load_state()
-    enriched = saved = skipped = 0
+    enriched = saved = skipped = reconciled = 0
 
-    save_fn, close_fn = _select_saver(args.save)
+    save_fn, close_fn, handled_fn = _select_saver(args.save)
 
     for ob in obligations:
         if not ob.get("requires_reply"):
@@ -174,6 +182,24 @@ def main(argv=None):
             account = (ob.get("accounts") or [None])[0]
             subj = (ob.get("sample_subjects") or [""])[0]
             re_subj = subj if subj.lower().startswith("re:") else f"Re: {subj}".strip()
+
+            # Server-truth reconciliation (fix for stale/triplicate drafts): if a
+            # reply already sits in Sent (operator answered) or a draft already
+            # sits in Drafts (dedup), skip — never re-draft a handled thread.
+            # Fail-open: handled_fn already swallows errors → False → we draft.
+            if handled_fn is not None:
+                try:
+                    already = handled_fn(to_addr, subj or re_subj)
+                except Exception:
+                    already = False
+                if already:
+                    ob["already_handled"] = True
+                    ob["draft_saved"] = True
+                    state.add(key)
+                    _save_state(state)
+                    reconciled += 1
+                    continue
+
             try:
                 ok = save_fn(to_addr, re_subj or "(no subject)", ob["draft_text"], account=account)
             except Exception:
@@ -194,7 +220,9 @@ def main(argv=None):
         json.dump(ledger, f, indent=2)
 
     print(f"draft_writer: enriched {enriched} reply drafts"
-          + (f"; saved {saved} new to Drafts ({skipped} already present)" if args.save else " (enrich-only)")
+          + (f"; saved {saved} new to Drafts ({skipped} already present, "
+             f"{reconciled} skipped — already answered/drafted on the server)"
+             if args.save else " (enrich-only)")
           + f" → {args.ledger}")
     return 0
 

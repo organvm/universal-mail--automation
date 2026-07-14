@@ -491,3 +491,50 @@ class IMAPProvider(EmailProvider):
         """Mark message as unread."""
         return self._checked_store(
             message_id, "-FLAGS", r"(\Seen)", "mark unread")
+
+    def append(self, message_bytes: bytes,
+               mailbox: str = "[Gmail]/Drafts") -> bool:
+        """Persist a raw RFC822 message into ``mailbox`` via IMAP APPEND — the keyless,
+        TCC-free way to save a DRAFT. NEVER sends: APPEND only writes to a mailbox, so
+        there is structurally no send path here.
+
+        This is the headless counterpart to MailAppProvider.create_draft: instead of
+        driving Apple Mail through AppleScript (which needs the one-time macOS Automation
+        grant — lever L-MAIL-AUTOMATION-GRANT #960), it logs into Gmail over the
+        app-password and APPENDs the message to ``[Gmail]/Drafts`` with the ``\\Draft``
+        flag. Drafts is a REAL folder on Gmail (unlike the label-backed inbox), so it
+        sticks reliably.
+
+        Honesty: imaplib raises only on ``BAD``; a server ``NO`` (quota, ACL, unknown
+        mailbox) comes back as a normal ``('NO', ...)`` tuple — so we report True ONLY on
+        an ``OK`` response, mirroring ``_checked_store`` (review U085/U131 precedent)."""
+        self.connect()  # idempotent — no-op if already connected
+        payload = message_bytes if isinstance(message_bytes, bytes) else str(message_bytes).encode("utf-8")
+        try:
+            typ, _ = self._connection.append(mailbox, r"(\Draft)", None, payload)
+        except Exception as e:
+            logger.error(f"IMAP APPEND to {mailbox} failed: {e}")
+            return False
+        if typ != "OK":
+            logger.error(f"IMAP APPEND to {mailbox} returned {typ}")
+            return False
+        return True
+
+    def create_draft(self, to_addr: str, subject: str, body: str,
+                     account: Optional[str] = None) -> bool:
+        """Save a DRAFT (never sent) to Gmail headlessly — the keyed mirror of
+        MailAppProvider.create_draft. Builds an RFC822 reply message and APPENDs it to
+        ``[Gmail]/Drafts`` over the app-password; no AppleScript, no TCC grant.
+
+        ``From`` is the authenticated mailbox (``self.user``); ``account`` (an Apple-Mail
+        account NAME in the caller) is accepted for signature parity but ignored here —
+        the keyed path always writes to the Gmail account it is logged into. Any ``Re:``
+        prefix is added at most once. This NEVER sends (see ``append``)."""
+        from email.message import EmailMessage as _Msg
+        msg = _Msg()
+        msg["From"] = self.user or ""
+        msg["To"] = to_addr
+        subj = subject or ""
+        msg["Subject"] = subj if subj.lower().startswith("re:") else f"Re: {subj}".strip()
+        msg.set_content(body or "")
+        return self.append(msg.as_bytes(), "[Gmail]/Drafts")

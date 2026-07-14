@@ -67,6 +67,55 @@ def compose(profile, ob, name: str) -> str:
     return text.strip() + "\n"
 
 
+def _select_saver(save: bool):
+    """Choose the draft-save transport and return ``(save_fn, close_fn)``.
+
+    Prefers the KEYED, HEADLESS IMAP APPEND path (``IMAPProvider.create_draft`` →
+    ``[Gmail]/Drafts``) whenever the Gmail app-password is hydrated in the env
+    (``GMAIL_APP_PASSWORD``/``IMAP_PASS`` + a user) — that path needs no macOS
+    Automation grant, so it designs out lever L-MAIL-AUTOMATION-GRANT (#960). With no
+    key present it FALLS BACK to the Apple-Mail AppleScript path (today's behaviour,
+    unchanged). Either way nothing is ever sent — both transports only write a Draft.
+
+    ``save_fn(to_addr, subject, body, account=None) -> bool``; ``close_fn`` (or None)
+    releases the keyed connection at the end. Returns ``(None, None)`` for enrich-only."""
+    if not save:
+        return None, None
+
+    user = os.environ.get("IMAP_USER") or os.environ.get("GMAIL_USER")
+    pw = os.environ.get("IMAP_PASS") or os.environ.get("GMAIL_APP_PASSWORD")
+    if user and pw:
+        try:
+            from providers.imap import IMAPProvider
+            prov = IMAPProvider(user=user, password=pw, use_gmail_extensions=True)  # allow-secret
+
+            def _save(to_addr, subject, body, account=None):
+                return prov.create_draft(to_addr, subject, body, account=account)
+
+            def _close():
+                try:
+                    prov.disconnect()
+                except Exception:  # noqa: BLE001 — cleanup must never raise into the beat
+                    pass
+
+            print("draft_writer: keyed IMAP draft path (headless — no Automation grant)")
+            return _save, _close
+        except Exception as e:  # pragma: no cover — import/construct guard, fail-open below
+            print(f"draft_writer: IMAP keyed path unavailable ({e}); falling back to Apple Mail")
+
+    try:
+        from providers.mailapp import MailAppProvider
+
+        def _save(to_addr, subject, body, account=None):
+            return MailAppProvider(account=account).create_draft(
+                to_addr, subject, body, account=account)
+
+        return _save, None
+    except Exception as e:  # pragma: no cover
+        print(f"draft_writer: MailApp unavailable ({e}); enrich-only")
+        return None, None
+
+
 def _load_state():
     try:
         return set(json.loads(open(_STATE).read()))
@@ -103,14 +152,7 @@ def main(argv=None):
     state = _load_state()
     enriched = saved = skipped = 0
 
-    provider = None
-    if args.save:
-        try:
-            from providers.mailapp import MailAppProvider
-            provider = MailAppProvider  # constructed per-account below
-        except Exception as e:  # pragma: no cover
-            print(f"draft_writer: MailApp unavailable ({e}); enrich-only")
-            provider = None
+    save_fn, close_fn = _select_saver(args.save)
 
     for ob in obligations:
         if not ob.get("requires_reply"):
@@ -123,7 +165,7 @@ def main(argv=None):
         ob["draft_to"] = to_addr
         enriched += 1
 
-        if provider is not None and saved < args.max:
+        if save_fn is not None and saved < args.max:
             key = _ob_key(ob)
             if key in state:
                 ob["draft_saved"] = True
@@ -133,8 +175,7 @@ def main(argv=None):
             subj = (ob.get("sample_subjects") or [""])[0]
             re_subj = subj if subj.lower().startswith("re:") else f"Re: {subj}".strip()
             try:
-                ok = provider(account=account).create_draft(
-                    to_addr, re_subj or "(no subject)", ob["draft_text"], account=account)
+                ok = save_fn(to_addr, re_subj or "(no subject)", ob["draft_text"], account=account)
             except Exception:
                 ok = False
             if ok:
@@ -146,6 +187,8 @@ def main(argv=None):
 
     if args.save:
         _save_state(state)
+        if close_fn:
+            close_fn()
 
     with open(args.ledger, "w") as f:
         json.dump(ledger, f, indent=2)

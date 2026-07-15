@@ -25,14 +25,27 @@ scope change, no TCC grant); absent the credential it fails closed and sends not
 Threading note: the ledger carries no RFC Message-ID/In-Reply-To (only Apple-Mail internal
 ids), so a SAFE reply is sent as a fresh `Re:` rather than threaded. Acceptable for the
 low-stakes SAFE tier; anything needing true threading belongs in the HOLD (draft) tier.
+
+KEYED SINGLE-FIRE (`--fire-obligation … --fire`, or ad-hoc `--fire-to/--fire-subject/…`):
+the explicit "send THIS one" button — the real fire the operator turns for a specific reply,
+including a HOLD one with PDF attachments (`--attach`). It is WHOLLY SEPARATE from the beat
+loop above (which only ever auto-sends SAFE). What it may transmit is the switchable HOLD-send
+boundary declared in limen's mail-tiers.yaml (`send_mode`) and overridable at runtime by
+`LIMEN_MAIL_HOLD_SEND`: `safe_only` (default — SAFE only; HOLD stays in the operator's client),
+`keyed_all` (any tier on an explicit --fire), or `per_matter` (HOLD only if the obligation
+carries `send_ok: true`). Attachments over ~24 MiB are refused inline and named for a Drive
+link (fail-closed — never a silent drop). This is why "the button doesn't exist on my side" is
+false: the button is line `SMTP_SSL('smtp.gmail.com', 465)` below; the operator turns the key.
 """
 
 import argparse
 import json
+import mimetypes
 import os
 import smtplib
 import sys
 from email.message import EmailMessage
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -45,6 +58,15 @@ except ImportError:  # pragma: no cover
     yaml = None
 
 _SENT_STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit", "drafts_sent.json")
+
+# Keyed-fire policy. The switchable HOLD-send boundary is declared in the limen registry
+# (mail-tiers.yaml -> send_mode); this mirrors its enum + fail-closed default so the sender
+# degrades safely (to safe_only) if the registry is unreadable.
+_SEND_MODES = ("safe_only", "keyed_all", "per_matter")
+_SEND_MODE_DEFAULT = "safe_only"
+# Inline-attachment ceiling: under Gmail's 25 MB hard limit once base64 (~33%) encoding
+# overhead is counted. Anything larger is refused inline and named for a Drive link.
+_MAX_INLINE_BYTES = 24 * 1024 * 1024
 
 
 def _limen_root() -> str:
@@ -167,13 +189,24 @@ def _smtp_creds() -> tuple[str, str] | None:
     return (user, pw) if user and pw else None
 
 
-def send_reply(to_addr: str, subject: str, body: str, creds: tuple[str, str]) -> bool:
+def _attach(msg: EmailMessage, paths) -> None:
+    """Attach each file as a MIME part (type guessed; unknown ⇒ application/octet-stream).
+    Callers pass ONLY files already validated to exist and fit (classify_attachments)."""
+    for p in paths or []:
+        fp = Path(p)
+        ctype, _ = mimetypes.guess_type(fp.name)
+        maintype, subtype = ctype.split("/", 1) if ctype else ("application", "octet-stream")
+        msg.add_attachment(fp.read_bytes(), maintype=maintype, subtype=subtype, filename=fp.name)
+
+
+def send_reply(to_addr: str, subject: str, body: str, creds: tuple[str, str], attachments=None) -> bool:
     user, pw = creds
     msg = EmailMessage()
     msg["From"] = user
     msg["To"] = to_addr
     msg["Subject"] = subject if subject.lower().startswith("re:") else f"Re: {subject}".strip()
     msg.set_content(body)
+    _attach(msg, attachments)
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s:
             s.login(user, pw)
@@ -184,6 +217,147 @@ def send_reply(to_addr: str, subject: str, body: str, creds: tuple[str, str]) ->
         return False
 
 
+def resolve_send_mode(tiers: dict | None) -> str:
+    """The switchable HOLD-send boundary. Precedence: env LIMEN_MAIL_HOLD_SEND override →
+    registry send_mode.mode → fail-closed default 'safe_only'. An unknown value degrades to
+    the default (never a wider send than declared)."""
+    val = os.environ.get("LIMEN_MAIL_HOLD_SEND")
+    if not val:
+        val = ((tiers or {}).get("send_mode") or {}).get("mode")
+    return val if val in _SEND_MODES else _SEND_MODE_DEFAULT
+
+
+def mode_permits_keyed(mode: str, tier: str, ob: dict) -> bool:
+    """Does send_mode permit an explicit keyed fire of a target in this tier?
+      safe_only  → SAFE tier only (HOLD/ad-hoc refused; the system never transmits legal/money).
+      keyed_all  → any tier on an explicit --fire.
+      per_matter → SAFE, or a HOLD obligation the operator opted in with send_ok: true.
+    NOTE: this gates only the EXPLICIT keyed fire; the beat auto-sender never sends non-SAFE."""
+    if mode == "keyed_all":
+        return True
+    if tier == "safe":
+        return True
+    if mode == "per_matter":
+        return bool((ob or {}).get("send_ok"))
+    return False
+
+
+def classify_attachments(paths, max_bytes: int | None = None):
+    """Split attachment paths into (inlineable Paths, oversized strs, missing strs). A missing
+    or oversized file makes the caller refuse the whole send (fail-closed — never silently drop
+    the PDF the reply depends on). max_bytes defaults to the module ceiling (read at call time)."""
+    if max_bytes is None:
+        max_bytes = _MAX_INLINE_BYTES
+    ok: list[Path] = []
+    oversized: list[str] = []
+    missing: list[str] = []
+    for p in paths or []:
+        fp = Path(str(p)).expanduser()
+        if not fp.is_file():
+            missing.append(str(p))
+        elif fp.stat().st_size > max_bytes:
+            oversized.append(str(p))
+        else:
+            ok.append(fp)
+    return ok, oversized, missing
+
+
+def _find_obligation(ledger_path: str, selector: str):
+    """Resolve one obligation from the ledger by index, exact _ob_key, or a sender/subject
+    substring (operator convenience). None if the ledger is unreadable or nothing matches."""
+    try:
+        ledger = json.loads(open(ledger_path).read())
+    except (OSError, ValueError):
+        return None
+    obs = ledger.get("obligations", [])
+    if selector.isdigit():
+        i = int(selector)
+        return obs[i] if 0 <= i < len(obs) else None
+    for ob in obs:
+        if _ob_key(ob) == selector:
+            return ob
+    needle = selector.lower()
+    for ob in obs:
+        hay = (ob.get("sender", "") + " " + " ".join(ob.get("sample_subjects") or [])).lower()
+        if needle in hay:
+            return ob
+    return None
+
+
+def fire_one(args, tiers: dict | None, sent_state: set) -> int:
+    """The explicit keyed 'send THIS one' button — the real fire the operator turns, separate
+    from the beat loop (which only ever auto-sends SAFE). Mode-gated (resolve_send_mode),
+    attachment-capable, fail-closed at every step, idempotent via drafts_sent.json.
+
+    Dry-run unless --fire (or LIMEN_MAIL_SEND=1): prints WOULD FIRE and transmits nothing."""
+    mode = resolve_send_mode(tiers)
+
+    if args.fire_obligation:
+        ob = _find_obligation(args.ledger, args.fire_obligation)
+        if ob is None:
+            print(f"send_drafts: fire — no obligation matched {args.fire_obligation!r}; nothing sent")
+            return 0
+        to_addr = ob.get("draft_to") or _addr(ob.get("sender", ""))
+        subj = (ob.get("sample_subjects") or [""])[0]
+        body = ob.get("draft_text")
+        if not body:
+            intent = safe_intent_for(ob, tiers)
+            body = render_safe(ob, tiers, intent) if intent else None
+        tier = tier_of(ob, tiers)
+    else:  # ad-hoc fire: an unknown target is fail-closed to the HOLD tier
+        ob = {}
+        to_addr = args.fire_to
+        subj = args.fire_subject or "(no subject)"
+        body = Path(args.fire_body_file).read_text() if args.fire_body_file else (args.fire_body or "")
+        tier = "hold"
+
+    if not to_addr or "@" not in to_addr or "privaterelay.appleid.com" in to_addr:
+        print("send_drafts: fire — no valid recipient address; nothing sent")
+        return 0
+    if not body or "[" in body or "]" in body:
+        print("send_drafts: fire — body missing or carries a '[bracket]' placeholder; refusing (fail-closed)")
+        return 0
+
+    if not mode_permits_keyed(mode, tier, ob):
+        print(f"send_drafts: fire REFUSED — send_mode={mode} does not permit a {tier!r}-tier keyed fire. "
+              "To arm it: set LIMEN_MAIL_HOLD_SEND=keyed_all, or (per_matter) add send_ok:true to the "
+              "obligation. Nothing sent.")
+        return 0
+
+    ok, oversized, missing = classify_attachments(args.attach)
+    if missing:
+        print(f"send_drafts: fire — attachment(s) not found: {missing}; nothing sent")
+        return 0
+    if oversized:
+        limit_mb = _MAX_INLINE_BYTES // (1024 * 1024)
+        print(f"send_drafts: fire REFUSED — attachment(s) over the {limit_mb} MiB inline limit: {oversized}. "
+              "Link them (e.g. a Drive share URL) in the body instead; nothing sent.")
+        return 0
+
+    key = _ob_key(ob) if ob else f"fire|{to_addr}|{subj}"
+    if key in sent_state:
+        print(f"send_drafts: fire — already sent (idempotent), skipping: {to_addr}")
+        return 0
+
+    armed = args.fire or os.environ.get("LIMEN_MAIL_SEND") == "1"
+    if not armed:
+        print(f"send_drafts: WOULD FIRE [{tier}] → {to_addr}  (re: {subj[:60]!r}) "
+              f"+{len(ok)} attachment(s)   [add --fire to transmit]")
+        return 0
+
+    creds = _smtp_creds()
+    if creds is None:
+        print("send_drafts: ARMED but no keyed SMTP credential (GMAIL_USER/GMAIL_APP_PASSWORD) — "
+              "fail closed, nothing sent")
+        return 0
+
+    if send_reply(to_addr, subj or "(no subject)", body, creds, attachments=ok):
+        sent_state.add(key)
+        _save_sent(sent_state)
+        print(f"send_drafts: FIRED [{tier}] → {to_addr}  (+{len(ok)} attachment(s))")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Tiered, fail-closed auto-send for reply-owed mail.")
     limen_root = _limen_root()
@@ -192,10 +366,27 @@ def main(argv=None) -> int:
     ap.add_argument("--max", type=int, default=int(os.environ.get("LIMEN_MAIL_SEND_MAX", "10")),
                     help="cap sends per run (safety)")
     ap.add_argument("--dry-run", action="store_true", help="force dry-run even if armed")
+    # Keyed single-fire — the explicit "send THIS one" button (mode-gated, attachment-capable).
+    ap.add_argument("--fire-obligation", metavar="SELECTOR",
+                    help="fire ONE ledger obligation by index / _ob_key / sender-or-subject substring")
+    ap.add_argument("--fire-to", metavar="ADDR", help="ad-hoc keyed fire: recipient address")
+    ap.add_argument("--fire-subject", metavar="SUBJ", help="ad-hoc keyed fire: subject")
+    ap.add_argument("--fire-body-file", metavar="PATH", help="ad-hoc keyed fire: path to the reply body")
+    ap.add_argument("--fire-body", metavar="TEXT", help="ad-hoc keyed fire: inline reply body")
+    ap.add_argument("--attach", action="append", default=[], metavar="PATH",
+                    help="attachment path for the keyed fire (repeatable; e.g. a PDF)")
+    ap.add_argument("--fire", action="store_true",
+                    help="actually transmit the single keyed send (else dry-run) — the explicit key-turn")
     args = ap.parse_args(argv)
 
-    armed = os.environ.get("LIMEN_MAIL_SEND") == "1" and not args.dry_run
     tiers = load_tiers()
+
+    # Keyed single-fire path: the explicit operator send button, wholly separate from the beat
+    # loop below (which only ever auto-sends SAFE tier). Mode-gated by send_mode / LIMEN_MAIL_HOLD_SEND.
+    if args.fire_obligation or args.fire_to:
+        return fire_one(args, tiers, _load_sent())
+
+    armed = os.environ.get("LIMEN_MAIL_SEND") == "1" and not args.dry_run
     if tiers is None:
         print("send_drafts: no tier registry (mail-tiers.yaml) — everything holds; sending nothing")
 

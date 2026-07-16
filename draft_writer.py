@@ -165,7 +165,10 @@ def main(argv=None):
     for ob in obligations:
         if not ob.get("requires_reply"):
             continue
-        to_addr = _addr(ob.get("sender", ""))
+        # Prefer Reply-To (where the sender actually wants replies — InMail relays and role
+        # senders thread back through a distinct reply-* address) over the raw From. Both are
+        # normalised through _addr, so a "Name <addr>" Reply-To resolves to the bare address.
+        to_addr = _addr(ob.get("reply_to") or "") or _addr(ob.get("sender", ""))
         # only draft to a real, replyable address (skip relay/role/no-address)
         if "@" not in to_addr or "privaterelay.appleid.com" in to_addr:
             continue

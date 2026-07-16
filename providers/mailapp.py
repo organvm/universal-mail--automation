@@ -18,7 +18,7 @@ from providers.base import (
     ListMessagesResult,
 )
 from core.models import EmailMessage, LabelAction, ProcessingResult
-from core.protocols import BULK_SIGNAL_HEADERS
+from core.protocols import CAPTURE_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -153,11 +153,12 @@ class MailAppProvider(EmailProvider):
         if self.account:
             account_filter = f'of account "{self.account}"'
 
-        # AppleScript list of the bulk-signal header names to keep (lower-cased for the
-        # prefix match). Only these lines survive — no body is ever fetched, so a message
-        # carrying List-Unsubscribe et al. is detectable at classification time cheaply.
+        # AppleScript list of the header names to keep (lower-cased for the prefix match):
+        # the bulk-signal headers PLUS Reply-To (CAPTURE_HEADERS). Only these lines survive —
+        # no body is ever fetched, so a message carrying List-Unsubscribe et al. (or a distinct
+        # Reply-To for the draft leaf) is detectable at classification time cheaply.
         bulk_keys_as = "{" + ", ".join(
-            f'"{h.lower()}:"' for h in BULK_SIGNAL_HEADERS
+            f'"{h.lower()}:"' for h in CAPTURE_HEADERS
         ) + "}"
 
         script = f'''

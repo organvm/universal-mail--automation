@@ -97,6 +97,13 @@ BULK_SIGNAL_HEADERS = (
     "List-Unsubscribe", "List-Id", "List-Post", "Precedence", "Auto-Submitted",
 )
 
+# The full header set the fetch layer captures at list time — the bulk-signal headers PLUS
+# Reply-To. Reply-To is NOT a bulk signal (it never feeds is_bulk_mail); it is captured so a
+# draft/reply can prefer the address the sender actually wants replies at (InMail relays and
+# many role senders set a distinct Reply-To that threads back correctly). Single source of
+# truth for the provider's cheap header grab — still only these named fields, never the body.
+CAPTURE_HEADERS = BULK_SIGNAL_HEADERS + ("Reply-To",)
+
 
 def _normalize_headers(headers: Union[str, "Mapping[str, Any]", None]) -> dict:
     """Coerce headers (a raw RFC-822 header block, or a name→value mapping) into a
@@ -211,6 +218,70 @@ _PROTOCOLS: List[ProtocolDef] = [
                      "terms are correct; otherwise note the objection and reply.",
         "draft_hint": None,
         "tags": ["legal"],
+    },
+    # ── Inbound-lead family (the positioning surfaces are the lure; these route the bite) ──
+    # A warm inbound — a recruiter/client who wrote FIRST. requires_reply=True, but NO
+    # money/legal/security tags: an opportunity is low-stakes SAFE-tier eligible (an offer
+    # is DECIDED, not held — held is for legal/money), so its tag set is deliberately
+    # {opportunity, …} only. Sits BELOW every consequential class (security/fraud/loan/
+    # billing/kyc/legal-sign) so a spoofed "opportunity" that also trips fraud/kyc is caught
+    # there first (first-match-wins by list order). The draft encodes "no hoops": reply BY
+    # EMAIL, external ATS/portal forms are not completed.
+    # inbound-linkedin FIRST in the family: a linkedin.com InMail/connect/view is a real
+    # inbound but arrives through a noreply relay (structurally unsendable), so it must route
+    # HERE, not to inbound-lead-hire (whose broad "InMail" token would otherwise swallow it).
+    # Lookaheads scan the whole haystack ("sender subject snippet label"): host linkedin.com
+    # AND a message signal, EXCLUDING the job-alert/jobs-you-may/network-digest blasts (which
+    # are not a person writing you). Classifies DESPITE List-Unsubscribe + a noreply sender —
+    # that is exactly the point: the protocol match outranks the bulk-header gate.
+    {
+        "cls": "inbound-linkedin",
+        "match": re.compile(r"(?ix) ((?=.*linkedin\.com)"
+                            r"(?=.*(in[\s-]?mail|sent\s*you\s*a\s*message|"
+                            r"wants\s*to\s*connect|viewed\s*your\s*profile))"
+                            r"(?!.*(job\s*alert|jobs\s*you\s*may|hiring\s*in\s*your\s*network)))"),
+        "priority": 70, "verify_first": False, "requires_reply": True,
+        "next_step": "A LinkedIn inbound (InMail / connect / profile-view) — real signal "
+                     "arriving through a noreply relay. Reply IN LinkedIn, or steer it to an "
+                     "email path so the thread lives where you can act on it.",
+        "draft_hint": "Thanks for the note. I keep opportunity conversations in email — "
+                      "could you send the details to my address, or share yours and I'll "
+                      "follow up there? Happy to go deeper once we're on email.",
+        "tags": ["opportunity"],
+    },
+    {
+        "cls": "inbound-lead-hire",
+        "match": re.compile(r"(?ix) (\[[^\]]+·\s*hire\]\s*—?\s*inbound|"
+                            r"recruiter|sourcing|talent\s*acquisition|talent\s*partner|"
+                            r"role\s*at|position\s*at|hiring\s*for|"
+                            r"opportunity\s*(at|with)|in[\s-]?mail)"),
+        "priority": 76, "verify_first": False, "requires_reply": True,
+        "next_step": "A recruiter wrote you FIRST — a warm hire lead. Reply by email, no "
+                     "portal hoops: thank them, say you're interested, and ask for the JD, "
+                     "comp range, process shape, and end-client (if agency), all by email.",
+        "draft_hint": "Thanks — I'm interested. To move efficiently, could you send by email: "
+                      "(1) the job description, (2) the comp range / rate, (3) the process shape "
+                      "and how many rounds, and (4) the end-client if this is through an agency? "
+                      "I keep hiring conversations in email and don't complete external ATS or "
+                      "portal forms up front. Happy to share availability windows by email once I "
+                      "have those.",
+        "tags": ["opportunity", "career"],
+    },
+    {
+        "cls": "inbound-lead-deploy",
+        "match": re.compile(r"(?ix) (\[[^\]]+·\s*deploy\]|"
+                            r"consult(ing|ation)?|engagement|proposal|quote|deploy|"
+                            r"build\s*(this|it)\s*for)"),
+        "priority": 76, "verify_first": False, "requires_reply": True,
+        "next_step": "A prospective client wrote you FIRST — a warm deploy lead. Reply by "
+                     "email: acknowledge, ask which engagement depth fits, and propose an "
+                     "email-first next step.",
+        "draft_hint": "Thanks for reaching out. To point you at the right shape, which "
+                      "engagement depth fits: a data/API feed, a white-label surface, a "
+                      "custom build, or an embedded engagement? Reply by email with a sentence "
+                      "on the outcome you want and I'll send back a concrete next step — I keep "
+                      "these conversations in email rather than external portals.",
+        "tags": ["opportunity", "client"],
     },
     {
         "cls": "legal-correspondence",

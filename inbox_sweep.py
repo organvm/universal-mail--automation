@@ -192,8 +192,15 @@ def classify_inbox(provider, inbox_name, limit):
             # Persist the bulk-signal headers (List-Unsubscribe / List-Id / Precedence …)
             # captured at fetch time so obligations_build can suppress bulk mail from the
             # reply-owed rung end-to-end. Omitted when the provider supplied none (fail-open).
-            if getattr(m, "headers", None):
-                row["headers"] = dict(m.headers)
+            hdrs = getattr(m, "headers", None)
+            if hdrs:
+                row["headers"] = dict(hdrs)
+                # Reply-To (captured alongside the bulk headers) → a top-level receipt field so
+                # obligations_build / draft_writer can prefer it over the raw From (InMail relays
+                # and role senders thread back through a distinct reply-* address). Absent → omit.
+                reply_to = (hdrs.get("reply-to") or hdrs.get("Reply-To") or "").strip()
+                if reply_to:
+                    row["reply_to"] = reply_to
             rows.append(row)
         fetched += len(res.messages)
         page_token = res.next_page_token

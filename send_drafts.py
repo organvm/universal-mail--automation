@@ -297,7 +297,7 @@ def fire_one(args, tiers: dict | None, sent_state: set) -> int:
         if ob is None:
             print(f"send_drafts: fire — no obligation matched {args.fire_obligation!r}; nothing sent")
             return 0
-        to_addr = ob.get("draft_to") or _addr(ob.get("sender", ""))
+        to_addr = ob.get("draft_to") or _addr(ob.get("reply_to") or "") or _addr(ob.get("sender", ""))
         subj = (ob.get("sample_subjects") or [""])[0]
         body = ob.get("draft_text")
         if not body:
@@ -413,7 +413,9 @@ def main(argv=None) -> int:
             counts["hold"] += 1
             continue
         counts["safe"] += 1
-        to_addr = _addr(ob.get("sender", ""))
+        # Prefer Reply-To over the raw From (parity with draft_writer): a lead's reply address
+        # may differ from its display From. Both normalise through _addr.
+        to_addr = _addr(ob.get("reply_to") or "") or _addr(ob.get("sender", ""))
         if "@" not in to_addr or "privaterelay.appleid.com" in to_addr:
             continue
         key = _ob_key(ob)

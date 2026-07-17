@@ -97,6 +97,17 @@ def test_reply_threading_headers():
     assert msg["Message-ID"]  # always set, so the send is verifiable
 
 
+def test_reply_subject_unfolds_folded_header():
+    # RFC 5322 folds long subjects (CRLF + WSP). A folded subject carried into the
+    # reply's "Re: ..." must be unfolded, or EmailMessage raises on the embedded
+    # newline — the live ResponsiveAds miss (2026-07-17).
+    folded = "ResponsiveAds Ad Format & Template Product Management Lead -\r\n ResponsiveAds, Inc."
+    msg = build_message(
+        CREDS, ["matt@example.com"], "", "x", reply_headers={"Message-ID": "<m@x>", "Subject": folded}
+    )
+    assert msg["Subject"] == "Re: ResponsiveAds Ad Format & Template Product Management Lead - ResponsiveAds, Inc."
+
+
 def test_reply_subject_not_double_prefixed():
     msg = build_message(
         CREDS, ["a@b.c"], "", "x", reply_headers={"Message-ID": "<m@x>", "Subject": "Re: already"}

@@ -238,6 +238,7 @@ _PROTOCOLS: List[ProtocolDef] = [
         "cls": "inbound-linkedin",
         "match": re.compile(r"(?ix) ((?=.*linkedin\.com)"
                             r"(?=.*(in[\s-]?mail|sent\s*you\s*a\s*message|"
+                            r"message\s*replied|hit-reply|"
                             r"wants\s*to\s*connect|viewed\s*your\s*profile))"
                             r"(?!.*(job\s*alert|jobs\s*you\s*may|hiring\s*in\s*your\s*network)))"),
         "priority": 70, "verify_first": False, "requires_reply": True,
@@ -351,6 +352,24 @@ _PROTOCOLS: List[ProtocolDef] = [
         "tags": ["maintenance"],
     },
 ]
+
+
+def requires_reply_match(sender: str, subject: str, label: str = "") -> Optional[str]:
+    """Sweep-tier probe: the class of the first requires_reply protocol matching this
+    envelope, else None.
+
+    Envelope-only (no snippet/headers exist at sweep time), so this is a conservative
+    subset of derive()'s protocol rung. The caller (inbox_sweep.decide) FIRES on a hit:
+    the sweep is the funnel for obligations_build, and it must never drop mail the
+    protocol registry owns — a LinkedIn InMail relay rides a Social label and a noreply
+    sender, and the reply-owed classes are exactly the ones a counterparty is waiting on.
+    Same invariant as the protocol-beats-bulk rung in derive(), applied one tier earlier.
+    """
+    hay = f"{sender} {subject} {label}"
+    for p in _PROTOCOLS:
+        if p["requires_reply"] and p["match"].search(hay):
+            return p["cls"]
+    return None
 
 
 def derive(sender: str, subject: str, label: str = "", tier: int = 4,

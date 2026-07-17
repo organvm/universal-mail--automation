@@ -12,9 +12,9 @@ Samples are synthetic — they mirror inbound-lead shapes without embedding priv
 import json
 
 from core.models import EmailMessage
-from core.protocols import derive
+from core.protocols import derive, requires_reply_match
 from providers.base import ListMessagesResult
-from inbox_sweep import classify_inbox
+from inbox_sweep import classify_inbox, decide
 from obligations_build import build
 from draft_writer import _ob_key
 
@@ -114,6 +114,49 @@ def test_linkedin_job_alert_digest_does_not_classify_inbound():
                     headers="List-Unsubscribe: <x>")
         assert ob.cls != "inbound-linkedin", subject
         assert ob.cls == "bulk", subject
+
+
+def test_linkedin_reply_notification_classifies_inbound():
+    # LinkedIn's counter-party-replied template ("Message replied: …" from
+    # hit-reply@linkedin.com) carries none of the InMail/new-message tokens — the live
+    # miss that let a Tier-A recruiter reply route to Social noise. Both new signals
+    # (subject template and the hit-reply sender lane) must classify.
+    ob = derive("Riley Recruiter <hit-reply@linkedin.com>",
+                "Message replied: Senior Engineering Opportunities",
+                headers="List-Unsubscribe: <x>")
+    assert ob.cls == "inbound-linkedin"
+    assert ob.requires_reply is True
+
+
+# --- Sweep-tier probe: the funnel must not drop protocol-owned mail ---
+
+def test_requires_reply_match_probe():
+    # Hit: the reply-notification envelope (no snippet/headers exist at sweep time).
+    assert requires_reply_match(
+        "Riley Recruiter <hit-reply@linkedin.com>",
+        "Message replied: Senior Engineering Opportunities",
+        "Social/LinkedIn") == "inbound-linkedin"
+    # Miss: job-alert digests and social nudges are not a person writing you.
+    assert requires_reply_match(
+        "LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+        "Job alert: 12 new roles", "Social/LinkedIn") is None
+    assert requires_reply_match(
+        "LinkedIn <messages-noreply@linkedin.com>",
+        "New skill available: Puzzle solving", "Social/LinkedIn") is None
+
+
+def test_decide_fires_protocol_owned_mail_over_noise_routing():
+    # The end-to-end regression: the sweep's noise router sent the InMail-reply
+    # notification to archive (Social label, noreply sender, tier 3), so it never
+    # became a fire and obligations_build never saw it. A requires_reply protocol
+    # match must outrank the router — same invariant as derive()'s protocol rung.
+    assert decide("Riley Recruiter <hit-reply@linkedin.com>",
+                  "Message replied: Senior Engineering Opportunities",
+                  tier=3, protected=False, label="Social/LinkedIn") == "fire"
+    # Job-alert digests keep their old routing (archive at tier 3, unprotected).
+    assert decide("LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+                  "Job alert: 12 new roles",
+                  tier=3, protected=False, label="Social/LinkedIn") == "archive"
 
 
 # --- Consequential classes still outrank a spoofed opportunity (first-match-wins) ---

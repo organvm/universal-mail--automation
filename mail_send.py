@@ -37,6 +37,7 @@ import email
 import email.policy
 import imaplib
 import logging
+import re
 import os
 import smtplib
 import sys
@@ -67,10 +68,15 @@ EXIT_NOT_FOUND = 4
 def _decode_subject(raw: str | None) -> str:
     if not raw:
         return ""
+    # Unfold first: RFC 5322 folds long headers (CRLF + WSP), and a folded subject
+    # carried into a reply's "Re: …" makes EmailMessage raise on the embedded newline —
+    # which silently limited the reply lane to short-subject threads.
+    raw = re.sub(r"\r?\n[ \t]*", " ", raw)
     try:
-        return str(make_header(decode_header(raw)))
+        decoded = str(make_header(decode_header(raw)))
     except Exception:  # noqa: BLE001 — a mangled header should not kill a scan
-        return raw
+        decoded = raw
+    return re.sub(r"[\r\n]+", " ", decoded).strip()
 
 
 class GmailImap:

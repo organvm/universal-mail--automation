@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from providers.mailapp import MailAppProvider  # noqa: E402
 from core.rules import categorize_with_tier, is_protected_sender  # noqa: E402
+from core.protocols import requires_reply_match  # noqa: E402
 
 NOISE_MAILBOX_DEFAULT = "AI-Triaged"
 
@@ -152,6 +153,13 @@ def decide(sender, subject, tier, protected, label=""):
         return "fire"
     # 2. Government / legal / e-sign senders always surface (high-stakes).
     if important_sender(sender):
+        return "fire"
+    # 2.5 A requires_reply PROTOCOL outranks the noise router. The sweep is the funnel
+    #     for obligations_build — it must never drop mail the protocol registry owns
+    #     (a LinkedIn InMail relay rides a Social label and a noreply sender; a recruiter
+    #     blast can ride Marketing). Same invariant as derive()'s protocol-beats-bulk
+    #     rung, applied one tier earlier. Envelope-only: no snippet exists at sweep time.
+    if requires_reply_match(sender, subject, label):
         return "fire"
     # 3. Clearly promotional mail is NEVER a fire — even when a First-Last display name
     #    makes it "look human" ("IBEN Team" <IBEN@ibo.org>, "Ivan at Notion"

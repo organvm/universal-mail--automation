@@ -10,6 +10,13 @@ recurring senders into one owned line with a count, and emits a single
 ``obligations-ledger.json`` (same one-feed shape as Limen's revenue-ladder.json) that the
 pervasive faces render.
 
+It ALSO folds in the archived-but-UNANSWERED rows that ``archived_scan.py`` writes
+(audit/archived_scan-*.json): a thread that owed a reply but was archived drops out of the
+INBOX-only sweep silently, so without this the ledger would under-count owed replies. Every
+archived row is re-run through the SAME derive() cascade (noise-hardening — an archived
+newsletter storm is suppressed, not counted) and deduped by subject stem against the live
+inbox fires, so no thread is double-counted.
+
 No network, no LLM, no mail mutation — pure read of on-disk receipts + the derived cascade.
 Fail-open: a torn or missing receipt is skipped, never fatal. Re-run any time the sweep
 refreshes the receipts; the ledger is fully regenerated from provenance each time.
@@ -19,6 +26,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 from collections import Counter
 from datetime import datetime
@@ -137,6 +145,60 @@ def _domain(sender: str) -> str:
     return _addr(sender).split("@")[-1] or "(none)"
 
 
+def _norm_stem(subject: str) -> str:
+    """Bare subject stem: strip leading Re:/Fwd:/Fw:, lower, collapse whitespace — the SAME
+    normalization archived_scan uses, so an archived row dedups against the live inbox fire that
+    shares its thread. PURE."""
+    s = str(subject or "")
+    while True:
+        m = re.match(r"^\s*(re|fwd|fw)\s*:\s*", s, re.IGNORECASE)
+        if not m:
+            break
+        s = s[m.end():]
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def _new_entry(ob, sender: str, reply_to: str) -> dict:
+    """One collapsed obligation line, shared by the inbox-fire and archived-row paths so both
+    produce byte-identical shapes (only the source differs). PURE."""
+    return {
+        "cls": ob.cls, "rung": ob.rung, "priority": ob.priority,
+        "title": f"{_CLS_TITLE.get(ob.cls, ob.cls)} — {_sender_name(sender)}",
+        "sender": sender, "reply_to": reply_to or None,
+        "domain": _domain(sender), "accounts": set(),
+        "next_step": ob.next_step, "why": ob.why, "owner": ob.owner,
+        "verify_first": ob.verify_first, "requires_reply": ob.requires_reply,
+        "draft_hint": ob.draft_hint, "tags": list(ob.tags),
+        "occurrences": 0, "sample_subjects": [], "message_ids": [],
+    }
+
+
+def load_archived_receipts(receipts_dir):
+    """Yield (account, unanswered_rows) for each archived_scan receipt, NEWEST per account.
+    archived_scan.py writes audit/archived_scan-<account>.json (schema uma.archived_scan.v1) with the
+    archived-but-unanswered rows. Multiple files can map to one logical account (naming drift); keep
+    only the newest by generated_at (ISO-8601 UTC → lexicographic compare is chronological) so a
+    stale receipt never double-counts or resurrects a since-answered thread. Fail-open per file."""
+    newest = {}   # account → (generated_at, rows)
+    for path in sorted(glob.glob(os.path.join(receipts_dir, "archived_scan-*.json"))):
+        try:
+            data = json.loads(open(path).read())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        account = data.get("account", os.path.basename(path))
+        gen = data.get("generated_at", "")
+        rows = data.get("unanswered")
+        if not isinstance(rows, list):
+            continue
+        prev = newest.get(account)
+        if prev is None or gen >= prev[0]:
+            newest[account] = (gen, rows)
+    for account, (_gen, rows) in newest.items():
+        yield account, rows
+
+
 def load_receipts(receipts_dir):
     """Yield (account, result, rows) for every readable receipt. Fail-open per file."""
     for path in sorted(glob.glob(os.path.join(receipts_dir, "inbox_sweep-*.json"))):
@@ -183,16 +245,7 @@ def build(receipts_dir):
             key = (ob.cls, _domain(sender))
             entry = agg.get(key)
             if entry is None:
-                entry = {
-                    "cls": ob.cls, "rung": ob.rung, "priority": ob.priority,
-                    "title": f"{_CLS_TITLE.get(ob.cls, ob.cls)} — {_sender_name(sender)}",
-                    "sender": sender, "reply_to": reply_to or None,
-                    "domain": _domain(sender), "accounts": set(),
-                    "next_step": ob.next_step, "why": ob.why, "owner": ob.owner,
-                    "verify_first": ob.verify_first, "requires_reply": ob.requires_reply,
-                    "draft_hint": ob.draft_hint, "tags": list(ob.tags),
-                    "occurrences": 0, "sample_subjects": [], "message_ids": [],
-                }
+                entry = _new_entry(ob, sender, reply_to)
                 agg[key] = entry
             # First non-empty Reply-To wins for the collapsed line (mirrors the sender pick).
             if reply_to and not entry.get("reply_to"):
@@ -204,6 +257,43 @@ def build(receipts_dir):
             mid = str(r.get("id", ""))
             if mid:
                 entry["message_ids"].append(mid)
+
+    # ── Fold in archived-but-UNANSWERED obligations (archived_scan receipts) ──────────────────────
+    # A thread that owed a reply but was archived never reaches the INBOX sweep, so it is invisible
+    # above. archived_scan.py already surfaced those per account; fold them into the SAME agg. Two
+    # guarantees: (1) NOISE-HARDENING — every archived row re-runs the same derive() cascade, so an
+    # archived bulk/list message (requires_reply False) is dropped, never counted; (2) DEDUP — a
+    # subject stem already surfaced from the live inbox (or an earlier archived account) is skipped,
+    # so a thread that sits in BOTH the archive scan and the inbox fire counts once. entry_stems is
+    # seeded from the inbox lines so an archived row can't re-count a live one.
+    entry_stems = {key: {_norm_stem(s) for s in e["sample_subjects"]} for key, e in agg.items()}
+    archived_unanswered = 0
+    for account, rows in load_archived_receipts(receipts_dir):
+        for r in rows:
+            sender = r.get("sender", "")
+            subject = r.get("subject", "")
+            ob = derive(sender, subject, r.get("label", ""), r.get("tier", 4),
+                        headers=r.get("headers") or r.get("raw_headers"))
+            if not ob.requires_reply:      # noise-hardening: bulk/list archived storm never counts
+                continue
+            stem = _norm_stem(subject)
+            if not stem:                   # unjoinable — can't dedup, so don't fold (mirrors scan)
+                continue
+            key = (ob.cls, _domain(sender))
+            seen = entry_stems.setdefault(key, set())
+            if stem in seen:               # already surfaced (inbox or earlier archive) — dedup
+                continue
+            seen.add(stem)
+            entry = agg.get(key)
+            if entry is None:
+                entry = _new_entry(ob, sender, "")
+                agg[key] = entry
+            entry["accounts"].add(account)
+            entry["occurrences"] += 1
+            entry["archived_occurrences"] = entry.get("archived_occurrences", 0) + 1
+            if subject and subject not in entry["sample_subjects"]:
+                entry["sample_subjects"].append(subject)
+            archived_unanswered += 1
 
     obligations = []
     for e in agg.values():
@@ -255,6 +345,9 @@ def build(receipts_dir):
             "fires": sum(a["fires"] for a in accounts),
             "verify_first": len(verify),
             "noise_killers": len(noise_killers),
+            # Archived-but-unanswered obligations folded in from archived_scan receipts (post-dedup,
+            # post-noise-suppression) — the INBOX-only sweep can't see these.
+            "archived_unanswered": archived_unanswered,
             "by_rung": dict(by_rung),
             "by_class": dict(by_class),
         },

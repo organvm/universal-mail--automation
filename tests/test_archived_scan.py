@@ -5,13 +5,17 @@ pure function, so an archived inbound with no reply in Sent surfaces, and one wh
 does not. This is the "have we responded to everything?" check made independent of the inbox.
 """
 
+import json
+
 from archived_scan import (
     _addressable,
     _norm_subject,
     _pick,
+    load_sent_union,
     reply_owed,
     sent_stem_index,
     unanswered_archived,
+    write_sent_index,
     ARCHIVE_CANDIDATES,
     SENT_CANDIDATES,
 )
@@ -96,6 +100,56 @@ def test_outlook_sent_items_is_a_sent_candidate():
     outlook = ["Inbox", "Archive", "Sent Items", "Deleted Items", "Junk Email"]
     assert _pick(outlook, SENT_CANDIDATES) == "Sent Items"
     assert _pick(outlook, ARCHIVE_CANDIDATES) == "Archive"
+
+
+def test_write_and_load_sent_index_roundtrip(tmp_path):
+    """Each account persists its Sent stems; load_sent_union folds them into one cross-account set."""
+    audit = str(tmp_path)
+    write_sent_index(audit, "a.j.padavano@icloud", "Archive", 180, {"partnership terms", "invoice"})
+    write_sent_index(audit, "padavano.anthony@gmail", "[Gmail]/Sent Mail", 180, {"deal terms"})
+    stems, accounts = load_sent_union(audit)
+    assert stems == {"partnership terms", "invoice", "deal terms"}
+    assert accounts == ["a.j.padavano@icloud", "padavano.anthony@gmail"]
+
+
+def test_load_sent_union_excludes_named_account(tmp_path):
+    """A scanning account excludes its own stale on-disk copy (it unions fresh own stems separately)."""
+    audit = str(tmp_path)
+    write_sent_index(audit, "a.j.padavano@icloud", "Archive", 180, {"only icloud"})
+    write_sent_index(audit, "padavano.anthony@gmail", "[Gmail]/Sent Mail", 180, {"only gmail"})
+    stems, accounts = load_sent_union(audit, exclude_account="padavano.anthony@gmail")
+    assert stems == {"only icloud"}
+    assert accounts == ["a.j.padavano@icloud"]
+
+
+def test_load_sent_union_fail_open_on_torn_index(tmp_path):
+    """A torn/foreign index is skipped, never fatal — the union degrades, never crashes."""
+    audit = str(tmp_path)
+    write_sent_index(audit, "good@icloud", "Archive", 180, {"kept"})
+    (tmp_path / "sent_index-torn_gmail.json").write_text("{not json")
+    (tmp_path / "sent_index-list.json").write_text(json.dumps(["not", "a", "dict"]))
+    stems, accounts = load_sent_union(audit)
+    assert stems == {"kept"}
+    assert accounts == ["good@icloud"]
+
+
+def test_cross_account_union_suppresses_reply_from_other_account(tmp_path):
+    """The blind spot B.6c closes: an inbound received on iCloud but ANSWERED from Gmail. Own-Sent
+    (empty) would mis-flag it unanswered; the cross-account union (Gmail's Sent) correctly suppresses
+    it, while a genuinely unanswered thread still surfaces."""
+    audit = str(tmp_path)
+    # Gmail persisted a Sent reply to "Partnership terms"; iCloud's own Sent has nothing.
+    write_sent_index(audit, "padavano.anthony@gmail", "[Gmail]/Sent Mail", 180, {"partnership terms"})
+    union, _ = load_sent_union(audit, exclude_account="a.j.padavano@icloud")
+
+    rows = [
+        {"action": "fire", "sender": "a@x.com", "subject": "Re: Partnership terms"},  # answered elsewhere
+        {"action": "fire", "sender": "b@y.com", "subject": "Invoice question"},        # truly unanswered
+    ]
+    own_sent = sent_stem_index([])                      # iCloud answered nothing itself
+    effective = own_sent | union                        # what scan() joins against
+    out = unanswered_archived(rows, effective)
+    assert [r["sender"] for r in out] == ["b@y.com"]    # cross-account reply suppresses the first
 
 
 def test_addressable_maps_gmail_specials_to_bracket_prefix():

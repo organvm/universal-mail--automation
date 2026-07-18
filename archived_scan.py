@@ -40,9 +40,19 @@ from inbox_sweep import classify_inbox
 from core.protocols import derive
 
 # Archive/All-Mail candidates, most-preferred first; Sent candidates likewise. Provider-specific
-# names differ (Gmail "[Gmail]/All Mail" vs iCloud/Outlook "Archive"); we pick the first that exists.
+# names differ (Gmail "All Mail" vs iCloud "Archive" vs Outlook "Archive"/"Sent Items"); we pick
+# the first that exists. "Sent Items" is Outlook's Sent folder — without it, Outlook accounts skip.
 ARCHIVE_CANDIDATES = ("[Gmail]/All Mail", "All Mail", "Archive", "Archived")
-SENT_CANDIDATES = ("[Gmail]/Sent Mail", "Sent Mail", "Sent Messages", "Sent")
+SENT_CANDIDATES = ("[Gmail]/Sent Mail", "Sent Mail", "Sent Items", "Sent Messages", "Sent")
+
+# Gmail exposes its special mailboxes by BARE display name ("All Mail", "Sent Mail") in the mailbox
+# list, but Mail.app can only ADDRESS them via the "[Gmail]/" path — `mailbox "All Mail" of account`
+# errors (-1728) while `mailbox "[Gmail]/All Mail" of account` works. So a picked Gmail special must
+# be remapped to its addressable form (proven: the prefixed form resolves, the bare one does not).
+_GMAIL_PREFIX = "[Gmail]/"
+_GMAIL_SPECIALS = frozenset({
+    "all mail", "sent mail", "drafts", "trash", "bin", "spam", "important", "starred",
+})
 
 
 def _norm_subject(subject: str) -> str:
@@ -112,6 +122,21 @@ def _pick(names, candidates) -> str | None:
     return None
 
 
+def _addressable(account, mailbox) -> "str | None":
+    """Map a picked mailbox DISPLAY name to the name Mail.app can actually ADDRESS.
+
+    Gmail's special mailboxes list as bare names ("All Mail", "Sent Mail") but only resolve via
+    the "[Gmail]/" path — so a Gmail special is remapped to its prefixed form. Everything else
+    (iCloud/Outlook folders, or an already-prefixed name) is addressable as-is. PURE."""
+    if not mailbox:
+        return mailbox
+    if mailbox.startswith(_GMAIL_PREFIX):
+        return mailbox
+    if "gmail" in (account or "").lower() and mailbox.lower() in _GMAIL_SPECIALS:
+        return _GMAIL_PREFIX + mailbox
+    return mailbox
+
+
 def scan(provider, archive_name: str, sent_name: str, limit: int, since_days: int | None = None) -> dict:
     """Live scan: classify the archive mailbox, index Sent, return the unanswered obligations.
     Fail-open — a provider error on either mailbox degrades to an empty result, never raises.
@@ -166,8 +191,10 @@ def main(argv=None) -> int:
         print(f"archived_scan: Mail.app unavailable ({type(exc).__name__}) — skipping", file=sys.stderr)
         return 0
 
-    archive_name = args.archive_mailbox or _pick(names, ARCHIVE_CANDIDATES)
-    sent_name = args.sent_mailbox or _pick(names, SENT_CANDIDATES)
+    # Resolve the picked (or overridden) mailbox to its ADDRESSABLE form — Gmail specials need the
+    # "[Gmail]/" path or Mail.app can't fetch them (the estate-scan finding: Gmail returned 0).
+    archive_name = _addressable(args.account, args.archive_mailbox or _pick(names, ARCHIVE_CANDIDATES))
+    sent_name = _addressable(args.account, args.sent_mailbox or _pick(names, SENT_CANDIDATES))
     if not archive_name or not sent_name:
         print(f"archived_scan: {args.account} — no archive/sent mailbox found "
               f"(archive={archive_name!r}, sent={sent_name!r}); skipping", file=sys.stderr)

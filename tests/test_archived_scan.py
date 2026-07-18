@@ -8,6 +8,7 @@ does not. This is the "have we responded to everything?" check made independent 
 from archived_scan import (
     _norm_subject,
     _pick,
+    reply_owed,
     sent_stem_index,
     unanswered_archived,
     ARCHIVE_CANDIDATES,
@@ -63,3 +64,26 @@ def test_pick_prefers_exact_then_suffix():
     assert _pick(icloud, SENT_CANDIDATES) == "Sent"
     # Nothing matching → None (caller skips the account).
     assert _pick(["INBOX", "Junk"], ARCHIVE_CANDIDATES) is None
+
+
+def test_reply_owed_suppresses_bulk_headered_archived_rows():
+    """The live-run false-alarm fix: classify_inbox marks a newsletter 'fire' PRE-suppression, so
+    an archived Apple/marketing storm used to count as 'unanswered'. reply_owed() runs the SAME
+    derive() cascade obligations_build uses, so a List-Unsubscribe row is dropped (cls=bulk) while a
+    genuine personal ask survives."""
+    bulk = {"action": "fire", "sender": "Apple <no-reply@email.apple.com>",
+            "subject": "This week on Apple", "tier": 4, "label": "Misc/Other",
+            "headers": {"list-unsubscribe": "<https://apple.com/unsub>"}}
+    personal = {"action": "fire", "sender": "Uruba Niazi <uruba.niazi@authplane.ai>",
+                "subject": "quick question on FastMCP + auth", "tier": 2, "label": "Business"}
+
+    # The predicate itself: bulk suppressed, personal kept.
+    assert reply_owed(bulk) is False
+    assert reply_owed(personal) is True
+
+    rows = [bulk, personal]
+    # WITH the predicate (what scan() passes): only the personal ask is archived-but-unanswered.
+    owed = unanswered_archived(rows, sent_stems=set(), requires_reply=reply_owed)
+    assert [r["sender"] for r in owed] == ["Uruba Niazi <uruba.niazi@authplane.ai>"]
+    # WITHOUT it (legacy): BOTH survive — proving the suppression is exactly what changed.
+    assert len(unanswered_archived(rows, sent_stems=set())) == 2

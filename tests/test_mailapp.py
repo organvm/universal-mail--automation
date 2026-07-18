@@ -112,3 +112,78 @@ def test_mailapp_star_accepts_due_date_from_base_apply_actions():
     assert result.error_count == 0
     assert result.success_count == 1
     assert scripts and "flagged status" in scripts[0]
+
+
+# --- bounded archive enumeration (the archive-timeout fix) ---------------------------------
+
+def test_build_list_script_unbounded_full_scans_oldest_first():
+    """The hot INBOX path is unchanged: full `messages of targetMailbox`, oldest-first slice,
+    NO date predicate. This is the regression guard that the fix stayed additive."""
+    script = MailAppProvider(account="a.j.padavano@icloud")._build_list_script(
+        "INBOX", start_offset=0, limit=50, since_days=None)
+    assert "set allMsgs to messages of targetMailbox" in script
+    assert "whose date received" not in script
+    assert "repeat with i from 1 to ((0 + 50))" in script   # oldest-first, offset+limit
+    assert 'of account "a.j.padavano@icloud"' in script
+
+
+def test_build_list_script_bounded_uses_date_predicate_newest_first():
+    """since_days ⇒ a server-side `whose date received > cutoff` predicate (bounds what Mail.app
+    materializes) walked NEWEST-first (`by -1`). This is the whole fix — the archive is never
+    fully materialized, so a large All-Mail can't time out."""
+    script = MailAppProvider(account="a.j.padavano@icloud")._build_list_script(
+        "Archive", start_offset=0, limit=500, since_days=180)
+    assert "whose date received > cutoffDate" in script
+    assert "set cutoffDate to (current date) - (180 * days)" in script
+    assert "by -1" in script                       # newest-first tail walk
+    assert "set hiIdx to totalMsgs - 0" in script  # offset 0 ⇒ start at the newest
+    assert "set loIdx to hiIdx - 500 + 1" in script
+    # It must NOT full-materialize the whole mailbox.
+    assert "set allMsgs to messages of targetMailbox\n" not in script
+
+
+def test_build_list_script_bounded_offset_pages_newest_first():
+    """A non-zero offset shifts the newest-first window down by that many messages, so
+    classify_inbox's 50-at-a-time pagination walks strictly older each page."""
+    script = MailAppProvider()._build_list_script(
+        "Archive", start_offset=50, limit=50, since_days=90)
+    assert "set hiIdx to totalMsgs - 50" in script
+    assert "set loIdx to hiIdx - 50 + 1" in script
+    assert "set cutoffDate to (current date) - (90 * days)" in script
+
+
+def test_list_messages_bounded_passes_generous_timeout_unbounded_keeps_default():
+    """Non-breaking-signature guard: the bounded path passes timeout=900; the unbounded path
+    calls _run_applescript with the SAME one-arg shape as before (so 1-arg mocks/callers
+    never break). This is why adding the kwarg didn't regress the hot path."""
+    provider = MailAppProvider(account="a.j.padavano@icloud")
+    calls = []
+
+    def fake(script, *args, **kwargs):
+        calls.append(kwargs.get("timeout", args[0] if args else None))
+        return _canned_list_output([("1", "x@y.com", "Hi", "false", "false", [])])
+
+    provider._run_applescript = fake
+    provider.list_messages(mailbox="Archive", limit=5)                    # unbounded
+    provider.list_messages(mailbox="Archive", limit=5, since_days=180)    # bounded
+    assert calls[0] is None    # unbounded: NO timeout kwarg (byte-identical to pre-change call)
+    assert calls[1] == 900     # bounded: generous timeout
+
+
+def test_classify_inbox_threads_since_days_only_when_set():
+    """classify_inbox passes since_days to the provider ONLY when set — so providers whose
+    list_messages predates the kwarg are never handed an unexpected argument."""
+    import inbox_sweep
+    from types import SimpleNamespace
+
+    def make_prov(seen):
+        class FakeProv:
+            def list_messages(self, query="", limit=50, page_token=None, mailbox="INBOX", **kw):
+                seen.append(kw.get("since_days", "OMITTED"))
+                return SimpleNamespace(messages=[], next_page_token=None)
+        return FakeProv()
+
+    seen = []
+    inbox_sweep.classify_inbox(make_prov(seen), "Archive", limit=10)
+    inbox_sweep.classify_inbox(make_prov(seen), "Archive", limit=10, since_days=180)
+    assert seen == ["OMITTED", 180]

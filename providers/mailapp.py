@@ -601,7 +601,11 @@ class MailAppProvider(EmailProvider):
         end tell
         '''
         try:
-            output = self._run_applescript(script)
+            # `name of every mailbox of account` intermittently exceeds 30s on a busy Mail.app
+            # (many mailboxes, cold IPC) and fails open to [] — which silently drops the whole
+            # account from an archive scan. This is a per-run resolution step, not the hot path,
+            # so give it a generous timeout.
+            output = self._run_applescript(script, timeout=300)
             return [name.strip() for name in output.split("\n") if name.strip()]
         except RuntimeError:
             return []

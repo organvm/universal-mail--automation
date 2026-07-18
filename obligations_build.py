@@ -20,7 +20,7 @@ import glob
 import json
 import os
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -55,6 +55,25 @@ def _load_sent_keys(receipts_dir):
     path = os.path.join(receipts_dir, "..", "audit", "drafts_sent.json")
     # receipts_dir defaults to <repo>/audit, so drafts_sent.json usually sits IN it; accept both.
     for cand in (os.path.join(receipts_dir, "drafts_sent.json"), path):
+        try:
+            data = json.loads(open(cand).read())
+            if isinstance(data, list):
+                return set(data)
+        except (OSError, ValueError):
+            continue
+    return set()
+
+
+def _load_answered_keys(receipts_dir):
+    """Drain signal, offline: the set of _ob_keys whose thread is already answered — a reply
+    exists in [Gmail]/Sent, recorded by correspondence-walk.py into audit/answered_keys.json
+    (the walk owns the IMAP SENT-state detector; this stays a pure on-disk read). A key present
+    ⇒ the obligation is retired from the ledger here, so reply_owed drains monotonically toward
+    its irreducible floor instead of re-materializing every beat. Mirrors _load_sent_keys and
+    preserves the builder's no-network/no-LLM guarantee; missing/torn ⇒ empty set (fail-open →
+    no drop → exact status quo)."""
+    path = os.path.join(receipts_dir, "..", "audit", "answered_keys.json")
+    for cand in (os.path.join(receipts_dir, "answered_keys.json"), path):
         try:
             data = json.loads(open(cand).read())
             if isinstance(data, list):
@@ -191,6 +210,16 @@ def build(receipts_dir):
         e["accounts"] = sorted(e["accounts"])
         e["sample_subjects"] = e["sample_subjects"][:4]
         obligations.append(e)
+
+    # DRAIN GATE: retire obligations already answered out-of-band. correspondence-walk.py detects
+    # a reply in [Gmail]/Sent and records that row's _ob_key to audit/answered_keys.json; here we
+    # drop those rows so the ledger shrinks instead of re-classifying an answered thread as
+    # reply-owed every beat. Same _ob_key the walk/sender/sensor share (never re-derived). Offline
+    # read; empty/absent set ⇒ no drop (fail-open). Held legal/precedent rows never enter this set
+    # (the walk only records sent/awaiting-them), so a genuine reply-owed row is never silenced.
+    answered_keys = _load_answered_keys(receipts_dir)
+    if answered_keys:
+        obligations = [o for o in obligations if _ob_key(o) not in answered_keys]
 
     # Stamp `safe_intent` ONLY on first-touch obligations of the two inbound-lead classes
     # (never inbound-linkedin — noreply senders, structurally unsendable). First-touch =

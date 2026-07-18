@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -71,6 +72,74 @@ def _norm_subject(subject: str) -> str:
 def sent_stem_index(sent_subjects) -> set[str]:
     """The set of normalized subject stems present in Sent — the 'already answered' index. PURE."""
     return {stem for stem in (_norm_subject(s) for s in sent_subjects) if stem}
+
+
+# ── Cross-account Sent union index ──────────────────────────────────────────────────────────────
+# A reply may have been sent from a DIFFERENT account than the one that received it (you receive on
+# iCloud and answer from Gmail). Indexing only the scanned account's own Sent therefore mis-flags
+# such a thread as "unanswered". The fix is a UNION across every account's Sent — but re-enumerating
+# every account's Sent on every scan is expensive, so each account persists its Sent stem index to
+# disk (audit/sent_index-<account>.json). A scan reads the union of the OTHER accounts' persisted
+# indices and unions in its OWN freshly-read stems. Round-robin over accounts (one per beat) keeps
+# every account's on-disk index refreshed, so the union is always freshest-available, never a full
+# fan-out. Falls back to own-Sent when no indices exist yet — a monotonic improvement, never a
+# regression.
+SENT_INDEX_SCHEMA = "uma.sent_index.v1"
+
+
+def _sent_index_path(audit_dir: str, account: str) -> str:
+    """Per-account Sent-index path (mirrors the archived_scan receipt naming). PURE."""
+    return os.path.join(audit_dir, f"sent_index-{re.sub(r'[^A-Za-z0-9]+', '_', account)}.json")
+
+
+def write_sent_index(audit_dir: str, account: str, sent_mailbox, since_days, stems) -> "str | None":
+    """Persist this account's Sent stem index so a later cross-account scan can union it in. This is
+    what makes the union cheap: each beat refreshes exactly one account's Sent (the round-robin
+    target). Fail-open: an unwritable index is a warning, never fatal — the scan just falls back to
+    own-Sent."""
+    path = _sent_index_path(audit_dir, account)
+    payload = {
+        "schema": SENT_INDEX_SCHEMA,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "account": account,
+        "sent_mailbox": sent_mailbox,
+        "since_days": since_days,
+        "stems": sorted(stems),
+    }
+    try:
+        os.makedirs(audit_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        return path
+    except OSError as exc:
+        print(f"archived_scan: sent index not written ({exc})", file=sys.stderr)
+        return None
+
+
+def load_sent_union(audit_dir: str, exclude_account=None) -> "tuple[set[str], list[str]]":
+    """Union every persisted per-account Sent stem index into ONE cross-account 'already answered'
+    set. Returns (stems, contributing_accounts). Fail-open per file: a torn/missing/foreign-schema
+    index is skipped, never fatal. `exclude_account` drops one account's own persisted copy (the
+    caller unions its FRESH own stems separately, so the stale on-disk copy is redundant). PURE
+    (disk read only)."""
+    stems: set[str] = set()
+    accounts: list[str] = []
+    for path in sorted(glob.glob(os.path.join(audit_dir, "sent_index-*.json"))):
+        try:
+            data = json.loads(open(path, encoding="utf-8").read())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        acct = data.get("account", "")
+        if exclude_account is not None and acct == exclude_account:
+            continue
+        s = data.get("stems")
+        if isinstance(s, list):
+            stems.update(str(x) for x in s if x)
+            if acct:
+                accounts.append(acct)
+    return stems, sorted(accounts)
 
 
 def reply_owed(row) -> bool:
@@ -137,30 +206,44 @@ def _addressable(account, mailbox) -> "str | None":
     return mailbox
 
 
-def scan(provider, archive_name: str, sent_name: str, limit: int, since_days: int | None = None) -> dict:
+def scan(provider, archive_name: str, sent_name: str, limit: int, since_days: int | None = None,
+         sent_union: "set[str] | None" = None) -> dict:
     """Live scan: classify the archive mailbox, index Sent, return the unanswered obligations.
     Fail-open — a provider error on either mailbox degrades to an empty result, never raises.
 
     `since_days` (when set) bounds BOTH the archive and the Sent enumeration to a recent
     window via a server-side `whose date received` predicate, so a large All-Mail/Sent never
     full-materializes and times out. A reply to a recent archived inbound is itself recent, so
-    the same window indexes the answering Sent message. None → unbounded (original behaviour)."""
+    the same window indexes the answering Sent message. None → unbounded (original behaviour).
+
+    `sent_union` (when set) is the cross-account 'already answered' index — the union of every
+    OTHER account's persisted Sent stems (see load_sent_union). It is unioned with this account's
+    own freshly-read Sent so a thread answered from a different account is NOT mis-flagged
+    unanswered. None → own-Sent only (original single-account behaviour). The own stems are
+    returned as `sent_stems_own` so the caller can persist this account's fresh index."""
     sent_extra = {"since_days": since_days} if since_days is not None else {}
     try:
         archive_rows = classify_inbox(provider, archive_name, limit, since_days=since_days)
     except Exception as exc:  # noqa: BLE001 — fail-open: no archive read this run
-        return {"error": f"archive classify failed ({type(exc).__name__})", "unanswered": []}
+        return {"error": f"archive classify failed ({type(exc).__name__})", "unanswered": [],
+                "sent_stems_own": set()}
     try:
         sent_res = provider.list_messages(query="", limit=limit, mailbox=sent_name, **sent_extra)
         sent_stems = sent_stem_index(m.subject or "" for m in sent_res.messages)
     except Exception:  # noqa: BLE001 — no Sent index ⇒ conservative: everything looks unanswered,
         sent_stems = set()  # so we still surface (never silently drop), but flag the degraded index.
+    # The effective 'answered' set is this account's own Sent UNION every other account's persisted
+    # Sent — so a reply sent from a different account counts (the cross-account blind spot).
+    effective_sent = sent_stems | (sent_union or set())
     fires = [r for r in archive_rows if r.get("action") == "fire"]
     reply_owed_fires = [r for r in fires if reply_owed(r)]
-    unanswered = unanswered_archived(archive_rows, sent_stems, requires_reply=reply_owed)
+    unanswered = unanswered_archived(archive_rows, effective_sent, requires_reply=reply_owed)
     return {
         "archive_scanned": len(archive_rows),
-        "sent_indexed": len(sent_stems),
+        "sent_indexed": len(effective_sent),
+        "sent_indexed_own": len(sent_stems),
+        # The own stems, returned so the caller persists this account's fresh index for the union.
+        "sent_stems_own": sent_stems,
         # Transparency: how many fires were bulk/no-reply-suppressed vs. genuinely reply-owed,
         # so a large count is never a silent false alarm (the live-run finding).
         "fires": len(fires),
@@ -179,6 +262,10 @@ def main(argv=None) -> int:
     ap.add_argument("--since-days", type=int, default=180,
                     help="bound the scan to a recent window (server-side `whose date received` "
                          "predicate) so a large Archive/All-Mail never times out; 0 = unbounded")
+    ap.add_argument("--cross-account-sent", action=argparse.BooleanOptionalAction, default=True,
+                    help="union every account's persisted Sent index so a reply sent from a "
+                         "different account counts as answered (default on; --no-cross-account-sent "
+                         "for own-Sent only)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--receipt", default=None, help="path to write the JSON receipt")
     args = ap.parse_args(argv)
@@ -201,7 +288,23 @@ def main(argv=None) -> int:
         return 0
 
     since_days = args.since_days or None  # 0 (or falsy) → unbounded
-    result = scan(provider, archive_name, sent_name, args.limit, since_days=since_days)
+
+    # Cross-account Sent union: the answered-from-ANY-account index lives in a single shared audit
+    # dir (never per-receipt-path, or the union would fragment). Exclude this account's own stale
+    # on-disk copy — scan() unions its fresh own stems in. Opt out with --no-cross-account-sent.
+    audit_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit")
+    if args.cross_account_sent:
+        sent_union, union_accounts = load_sent_union(audit_dir, exclude_account=args.account)
+    else:
+        sent_union, union_accounts = None, []
+    result = scan(provider, archive_name, sent_name, args.limit, since_days=since_days,
+                  sent_union=sent_union)
+    # Persist THIS account's fresh Sent index so the next round-robin scan of another account can
+    # union it in. Only when the read succeeded (own stems present) so a degraded read never clobbers
+    # a good index with an empty one.
+    own_stems = result.get("sent_stems_own") or set()
+    if args.cross_account_sent and own_stems:
+        write_sent_index(audit_dir, args.account, sent_name, since_days, own_stems)
     unanswered = result.get("unanswered", [])
 
     receipt = {
@@ -213,6 +316,8 @@ def main(argv=None) -> int:
         "since_days": since_days,
         "archive_scanned": result.get("archive_scanned", 0),
         "sent_indexed": result.get("sent_indexed", 0),
+        "sent_indexed_own": result.get("sent_indexed_own", 0),
+        "sent_union_accounts": union_accounts,
         "fires": result.get("fires", 0),
         "bulk_suppressed": result.get("bulk_suppressed", 0),
         "reply_owed": result.get("reply_owed", 0),
@@ -238,10 +343,12 @@ def main(argv=None) -> int:
                           ("account", "archive_scanned", "sent_indexed", "fires",
                            "bulk_suppressed", "reply_owed", "unanswered_count")}))
     else:
+        union_note = (f" ({receipt['sent_indexed_own']} own + {len(union_accounts)} other "
+                      f"account(s))") if union_accounts else ""
         print(f"archived_scan: {args.account} — scanned {receipt['archive_scanned']} archived, "
               f"{receipt['fires']} fires ({receipt['bulk_suppressed']} bulk-suppressed, "
-              f"{receipt['reply_owed']} reply-owed), {receipt['sent_indexed']} sent-stems indexed "
-              f"→ {receipt['unanswered_count']} archived-but-UNANSWERED (receipt → {path})")
+              f"{receipt['reply_owed']} reply-owed), {receipt['sent_indexed']} sent-stems indexed"
+              f"{union_note} → {receipt['unanswered_count']} archived-but-UNANSWERED (receipt → {path})")
     return 0
 
 

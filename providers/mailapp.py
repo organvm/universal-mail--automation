@@ -86,14 +86,21 @@ class MailAppProvider(EmailProvider):
         self.account = account
         self._created_mailboxes: set = set()
 
-    def _run_applescript(self, script: str) -> str:
-        """Execute AppleScript and return output."""
+    def _run_applescript(self, script: str, timeout: int = 30) -> str:
+        """Execute AppleScript and return output.
+
+        `timeout` is tunable: the hot INBOX path keeps the 30s default, but a
+        bounded archive/All-Mail scan (a per-run diagnostic, not the beat) passes
+        a generous value — the `whose date received` predicate materializes only
+        the recent slice, but a cold iCloud archive can still take tens of seconds
+        to page envelopes in.
+        """
         try:
             result = subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=timeout,
             )
             if result.returncode != 0:
                 logger.error(f"AppleScript error: {result.stderr}")
@@ -127,31 +134,26 @@ class MailAppProvider(EmailProvider):
         """Disconnect (no-op for Mail.app)."""
         logger.debug("Mail.app provider disconnected")
 
-    def list_messages(
+    def _build_list_script(
         self,
-        query: str = "",
-        limit: int = 100,
-        page_token: Optional[str] = None,
-        mailbox: str = "INBOX",
-    ) -> ListMessagesResult:
+        mailbox: str,
+        start_offset: int,
+        limit: int,
+        since_days: Optional[int] = None,
+    ) -> str:
+        """Build the list_messages AppleScript. PURE (no I/O) so the enumeration
+        strategy is unit-testable without Mail.app.
+
+        Two modes share ONE extraction body — only the *selector* changes:
+        - Unbounded (since_days is None): `messages of targetMailbox`, oldest-first,
+          sliced [start_offset, start_offset+limit]. The original inbox behaviour.
+        - Bounded (since_days set): `messages ... whose date received > cutoff` — Mail.app
+          materializes only the in-window slice (NOT the whole 40k-message archive),
+          walked NEWEST-first with the same offset/limit so classify_inbox's 50-at-a-time
+          pagination still works. This is the archive-timeout fix; mirrors the proven
+          `whose` idiom in inbox_sweep._list_flagged.
         """
-        List messages from Mail.app.
-
-        Args:
-            query: Not used (Mail.app doesn't have server-side search via AppleScript)
-            limit: Maximum messages to return
-            page_token: Start offset as string (for pagination)
-            mailbox: Mailbox name to search in (default INBOX)
-
-        Returns:
-            ListMessagesResult with message IDs
-        """
-        start_offset = int(page_token) if page_token else 0
-
-        # Build AppleScript to list messages
-        account_filter = ""
-        if self.account:
-            account_filter = f'of account "{self.account}"'
+        account_filter = f'of account "{self.account}"' if self.account else ""
 
         # AppleScript list of the header names to keep (lower-cased for the prefix match):
         # the bulk-signal headers PLUS Reply-To (CAPTURE_HEADERS). Only these lines survive —
@@ -161,20 +163,45 @@ class MailAppProvider(EmailProvider):
             f'"{h.lower()}:"' for h in CAPTURE_HEADERS
         ) + "}"
 
-        script = f'''
+        if since_days is not None:
+            # Server-side date predicate bounds what materializes to the recent slice.
+            # The filtered list is oldest-first, so walk the tail down (newest-first),
+            # honouring offset/limit for paging.
+            enumerate_block = (
+                f'set cutoffDate to (current date) - ({int(since_days)} * days)\n'
+                f'            set targetMailbox to mailbox "{mailbox}" {account_filter}\n'
+                f'            set allMsgs to (messages of targetMailbox whose date received > cutoffDate)\n'
+                f'            set totalMsgs to count of allMsgs\n'
+                f'            set hiIdx to totalMsgs - {start_offset}\n'
+                f'            set loIdx to hiIdx - {limit} + 1\n'
+                f'            if loIdx < 1 then set loIdx to 1'
+            )
+            repeat_open = (
+                'repeat with i from hiIdx to loIdx by -1\n'
+                '                if i < 1 then exit repeat'
+            )
+        else:
+            enumerate_block = (
+                f'set targetMailbox to mailbox "{mailbox}" {account_filter}\n'
+                f'            set allMsgs to messages of targetMailbox\n'
+                f'            set totalMsgs to count of allMsgs'
+            )
+            repeat_open = (
+                f'repeat with i from {start_offset + 1} to (({start_offset} + {limit}))\n'
+                '                if i > totalMsgs then exit repeat'
+            )
+
+        return f'''
         set fieldSep to (ASCII character 31)
         set hdrSep to (ASCII character 30)
         set bulkKeys to {bulk_keys_as}
         tell application "Mail"
             set msgList to {{}}
             set msgCount to 0
-            set targetMailbox to mailbox "{mailbox}" {account_filter}
-            set allMsgs to messages of targetMailbox
-            set totalMsgs to count of allMsgs
+            {enumerate_block}
 
-            -- Process messages starting from offset
-            repeat with i from {start_offset + 1} to (({start_offset} + {limit}))
-                if i > totalMsgs then exit repeat
+            -- Process messages within the [offset, offset+limit] window
+            {repeat_open}
                 set msg to item i of allMsgs
                 set msgId to id of msg
                 set msgSender to ""
@@ -239,8 +266,43 @@ class MailAppProvider(EmailProvider):
         end toLower
         '''
 
+    def list_messages(
+        self,
+        query: str = "",
+        limit: int = 100,
+        page_token: Optional[str] = None,
+        mailbox: str = "INBOX",
+        since_days: Optional[int] = None,
+    ) -> ListMessagesResult:
+        """
+        List messages from Mail.app.
+
+        Args:
+            query: Not used (Mail.app doesn't have server-side search via AppleScript)
+            limit: Maximum messages to return
+            page_token: Start offset as string (for pagination)
+            mailbox: Mailbox name to search in (default INBOX)
+            since_days: When set, enumerate ONLY messages received within the last
+                `since_days` days, newest-first, via a server-side `whose date received`
+                predicate — bounding what Mail.app materializes so a large Archive/All-Mail
+                never blocks (the fix for the INBOX-only sweep timing out on iCloud).
+                None → the full oldest-first inbox behaviour, unchanged.
+
+        Returns:
+            ListMessagesResult with message IDs
+        """
+        start_offset = int(page_token) if page_token else 0
+        script = self._build_list_script(mailbox, start_offset, limit, since_days)
+
         try:
-            output = self._run_applescript(script)
+            if since_days is not None:
+                # A bounded recent-window scan is a per-run diagnostic, not the hot beat
+                # path, so it gets a generous timeout. The unbounded inbox path deliberately
+                # calls _run_applescript with the SAME one-arg signature as before, so every
+                # existing caller/mock is untouched (additive, non-breaking).
+                output = self._run_applescript(script, timeout=900)
+            else:
+                output = self._run_applescript(script)
         except RuntimeError as e:
             logger.error(f"Failed to list messages: {e}")
             return ListMessagesResult(messages=[], next_page_token=None)

@@ -180,11 +180,15 @@ def decide(sender, subject, tier, protected, label=""):
     return "archive"
 
 
-def classify_inbox(provider, inbox_name, limit):
+def classify_inbox(provider, inbox_name, limit, since_days=None):
+    # since_days (when set) bounds the fetch to a recent window, newest-first — used by the
+    # archived-unanswered scan so a large Archive/All-Mail never full-materializes. Passed
+    # through ONLY when set, so providers whose list_messages predates the kwarg are untouched.
+    extra = {"since_days": since_days} if since_days is not None else {}
     rows, page_token, fetched = [], None, 0
     while fetched < limit:
         res = provider.list_messages(query="", limit=min(limit - fetched, 50),
-                                     page_token=page_token, mailbox=inbox_name)
+                                     page_token=page_token, mailbox=inbox_name, **extra)
         if not res.messages:
             break
         for m in res.messages:

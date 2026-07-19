@@ -18,8 +18,29 @@ from providers.base import (
     ListMessagesResult,
 )
 from core.models import EmailMessage, LabelAction, ProcessingResult
+from core.protocols import CAPTURE_HEADERS
 
 logger = logging.getLogger(__name__)
+
+# In-band delimiters for the AppleScript pseudo-JSON transport. Chosen from the C0 control
+# range so they can never collide with a header value, subject, or sender. FIELD_SEP splits
+# the per-message tuple columns; HDR_SEP splits captured "name: value" header lines within
+# the single headers column (a raw header block's own newlines would break the row protocol).
+_FIELD_SEP = "\x1f"   # unit separator — between columns
+_HDR_SEP = "\x1e"     # record separator — between header lines in the headers column
+
+
+def _parse_bulk_headers(blob: str) -> Dict[str, str]:
+    """Parse the captured bulk-header column (``name: value`` lines joined by ``_HDR_SEP``)
+    into a lower-cased {name: value} map. Fail-open: empty/garbage → {}."""
+    out: Dict[str, str] = {}
+    for line in (blob or "").split(_HDR_SEP):
+        if ":" in line:
+            name, _, val = line.partition(":")
+            name = name.strip().lower()
+            if name:
+                out[name] = val.strip()
+    return out
 
 
 class MailAppProvider(EmailProvider):
@@ -65,14 +86,21 @@ class MailAppProvider(EmailProvider):
         self.account = account
         self._created_mailboxes: set = set()
 
-    def _run_applescript(self, script: str) -> str:
-        """Execute AppleScript and return output."""
+    def _run_applescript(self, script: str, timeout: int = 30) -> str:
+        """Execute AppleScript and return output.
+
+        `timeout` is tunable: the hot INBOX path keeps the 30s default, but a
+        bounded archive/All-Mail scan (a per-run diagnostic, not the beat) passes
+        a generous value — the `whose date received` predicate materializes only
+        the recent slice, but a cold iCloud archive can still take tens of seconds
+        to page envelopes in.
+        """
         try:
             result = subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=timeout,
             )
             if result.returncode != 0:
                 logger.error(f"AppleScript error: {result.stderr}")
@@ -106,43 +134,74 @@ class MailAppProvider(EmailProvider):
         """Disconnect (no-op for Mail.app)."""
         logger.debug("Mail.app provider disconnected")
 
-    def list_messages(
+    def _build_list_script(
         self,
-        query: str = "",
-        limit: int = 100,
-        page_token: Optional[str] = None,
-        mailbox: str = "INBOX",
-    ) -> ListMessagesResult:
+        mailbox: str,
+        start_offset: int,
+        limit: int,
+        since_days: Optional[int] = None,
+    ) -> str:
+        """Build the list_messages AppleScript. PURE (no I/O) so the enumeration
+        strategy is unit-testable without Mail.app.
+
+        Two modes share ONE extraction body — only the *selector* changes:
+        - Unbounded (since_days is None): `messages of targetMailbox`, oldest-first,
+          sliced [start_offset, start_offset+limit]. The original inbox behaviour.
+        - Bounded (since_days set): `messages ... whose date received > cutoff` — Mail.app
+          materializes only the in-window slice (NOT the whole 40k-message archive),
+          walked NEWEST-first with the same offset/limit so classify_inbox's 50-at-a-time
+          pagination still works. This is the archive-timeout fix; mirrors the proven
+          `whose` idiom in inbox_sweep._list_flagged.
         """
-        List messages from Mail.app.
+        account_filter = f'of account "{self.account}"' if self.account else ""
 
-        Args:
-            query: Not used (Mail.app doesn't have server-side search via AppleScript)
-            limit: Maximum messages to return
-            page_token: Start offset as string (for pagination)
-            mailbox: Mailbox name to search in (default INBOX)
+        # AppleScript list of the header names to keep (lower-cased for the prefix match):
+        # the bulk-signal headers PLUS Reply-To (CAPTURE_HEADERS). Only these lines survive —
+        # no body is ever fetched, so a message carrying List-Unsubscribe et al. (or a distinct
+        # Reply-To for the draft leaf) is detectable at classification time cheaply.
+        bulk_keys_as = "{" + ", ".join(
+            f'"{h.lower()}:"' for h in CAPTURE_HEADERS
+        ) + "}"
 
-        Returns:
-            ListMessagesResult with message IDs
-        """
-        start_offset = int(page_token) if page_token else 0
+        if since_days is not None:
+            # Server-side date predicate bounds what materializes to the recent slice.
+            # The filtered list is oldest-first, so walk the tail down (newest-first),
+            # honouring offset/limit for paging.
+            enumerate_block = (
+                f'set cutoffDate to (current date) - ({int(since_days)} * days)\n'
+                f'            set targetMailbox to mailbox "{mailbox}" {account_filter}\n'
+                f'            set allMsgs to (messages of targetMailbox whose date received > cutoffDate)\n'
+                f'            set totalMsgs to count of allMsgs\n'
+                f'            set hiIdx to totalMsgs - {start_offset}\n'
+                f'            set loIdx to hiIdx - {limit} + 1\n'
+                f'            if loIdx < 1 then set loIdx to 1'
+            )
+            repeat_open = (
+                'repeat with i from hiIdx to loIdx by -1\n'
+                '                if i < 1 then exit repeat'
+            )
+        else:
+            enumerate_block = (
+                f'set targetMailbox to mailbox "{mailbox}" {account_filter}\n'
+                f'            set allMsgs to messages of targetMailbox\n'
+                f'            set totalMsgs to count of allMsgs'
+            )
+            repeat_open = (
+                f'repeat with i from {start_offset + 1} to (({start_offset} + {limit}))\n'
+                '                if i > totalMsgs then exit repeat'
+            )
 
-        # Build AppleScript to list messages
-        account_filter = ""
-        if self.account:
-            account_filter = f'of account "{self.account}"'
-
-        script = f'''
+        return f'''
+        set fieldSep to (ASCII character 31)
+        set hdrSep to (ASCII character 30)
+        set bulkKeys to {bulk_keys_as}
         tell application "Mail"
             set msgList to {{}}
             set msgCount to 0
-            set targetMailbox to mailbox "{mailbox}" {account_filter}
-            set allMsgs to messages of targetMailbox
-            set totalMsgs to count of allMsgs
+            {enumerate_block}
 
-            -- Process messages starting from offset
-            repeat with i from {start_offset + 1} to (({start_offset} + {limit}))
-                if i > totalMsgs then exit repeat
+            -- Process messages within the [offset, offset+limit] window
+            {repeat_open}
                 set msg to item i of allMsgs
                 set msgId to id of msg
                 set msgSender to ""
@@ -156,8 +215,31 @@ class MailAppProvider(EmailProvider):
                 set msgRead to read status of msg
                 set msgFlagged to flagged status of msg
 
-                -- Output as pseudo-JSON (tab-separated for parsing)
-                set msgInfo to (msgId as string) & "\\t" & msgSender & "\\t" & msgSubject & "\\t" & (msgRead as string) & "\\t" & (msgFlagged as string)
+                -- Capture ONLY the bulk-signal header lines (never the body). `all headers`
+                -- is already resident on the message object, so this pulls no extra content.
+                set bulkHdrs to ""
+                try
+                    set hdrText to all headers of msg
+                    set keptLines to {{}}
+                    repeat with para in (paragraphs of hdrText)
+                        set ln to (para as string)
+                        if ln is not "" then
+                            set lnLower to my toLower(ln)
+                            repeat with k in bulkKeys
+                                if lnLower starts with (k as string) then
+                                    set end of keptLines to ln
+                                    exit repeat
+                                end if
+                            end repeat
+                        end if
+                    end repeat
+                    set AppleScript's text item delimiters to hdrSep
+                    set bulkHdrs to (keptLines as string)
+                    set AppleScript's text item delimiters to ""
+                end try
+
+                -- Output as pseudo-JSON (unit-separator-delimited columns for parsing)
+                set msgInfo to (msgId as string) & fieldSep & msgSender & fieldSep & msgSubject & fieldSep & (msgRead as string) & fieldSep & (msgFlagged as string) & fieldSep & bulkHdrs
                 set end of msgList to msgInfo
                 set msgCount to msgCount + 1
             end repeat
@@ -166,10 +248,61 @@ class MailAppProvider(EmailProvider):
             set AppleScript's text item delimiters to linefeed
             return (msgList as string) & "\\n---TOTAL:" & (totalMsgs as string)
         end tell
+
+        on toLower(s)
+            set upperChars to "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            set lowerChars to "abcdefghijklmnopqrstuvwxyz"
+            set outp to ""
+            repeat with c in (characters of s)
+                set c to (c as string)
+                set oset to (offset of c in upperChars)
+                if oset > 0 then
+                    set outp to outp & (character oset of lowerChars)
+                else
+                    set outp to outp & c
+                end if
+            end repeat
+            return outp
+        end toLower
         '''
 
+    def list_messages(
+        self,
+        query: str = "",
+        limit: int = 100,
+        page_token: Optional[str] = None,
+        mailbox: str = "INBOX",
+        since_days: Optional[int] = None,
+    ) -> ListMessagesResult:
+        """
+        List messages from Mail.app.
+
+        Args:
+            query: Not used (Mail.app doesn't have server-side search via AppleScript)
+            limit: Maximum messages to return
+            page_token: Start offset as string (for pagination)
+            mailbox: Mailbox name to search in (default INBOX)
+            since_days: When set, enumerate ONLY messages received within the last
+                `since_days` days, newest-first, via a server-side `whose date received`
+                predicate — bounding what Mail.app materializes so a large Archive/All-Mail
+                never blocks (the fix for the INBOX-only sweep timing out on iCloud).
+                None → the full oldest-first inbox behaviour, unchanged.
+
+        Returns:
+            ListMessagesResult with message IDs
+        """
+        start_offset = int(page_token) if page_token else 0
+        script = self._build_list_script(mailbox, start_offset, limit, since_days)
+
         try:
-            output = self._run_applescript(script)
+            if since_days is not None:
+                # A bounded recent-window scan is a per-run diagnostic, not the hot beat
+                # path, so it gets a generous timeout. The unbounded inbox path deliberately
+                # calls _run_applescript with the SAME one-arg signature as before, so every
+                # existing caller/mock is untouched (additive, non-breaking).
+                output = self._run_applescript(script, timeout=900)
+            else:
+                output = self._run_applescript(script)
         except RuntimeError as e:
             logger.error(f"Failed to list messages: {e}")
             return ListMessagesResult(messages=[], next_page_token=None)
@@ -185,15 +318,17 @@ class MailAppProvider(EmailProvider):
             if not line.strip():
                 continue
 
-            parts = line.split("\t")
+            parts = line.split(_FIELD_SEP)
             if len(parts) >= 5:
                 msg_id, sender, subject, is_read, is_flagged = parts[:5]
+                bulk_blob = parts[5] if len(parts) >= 6 else ""
                 messages.append(EmailMessage(
                     id=msg_id,
                     sender=sender,
                     subject=subject,
                     is_read=is_read.lower() == "true",
                     is_starred=is_flagged.lower() == "true",
+                    headers=_parse_bulk_headers(bulk_blob),
                 ))
 
         # Calculate next page token
@@ -466,7 +601,11 @@ class MailAppProvider(EmailProvider):
         end tell
         '''
         try:
-            output = self._run_applescript(script)
+            # `name of every mailbox of account` intermittently exceeds 30s on a busy Mail.app
+            # (many mailboxes, cold IPC) and fails open to [] — which silently drops the whole
+            # account from an archive scan. This is a per-run resolution step, not the hot path,
+            # so give it a generous timeout.
+            output = self._run_applescript(script, timeout=300)
             return [name.strip() for name in output.split("\n") if name.strip()]
         except RuntimeError:
             return []

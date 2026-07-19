@@ -549,7 +549,6 @@ def test_owner_binding_survives_update_then_blocks_foreign_complete():
 
 
 
-
 def test_cancel_then_cannot_cancel_completed():
     # Cancel a fresh session.
     sid = client.post("/acp/checkout_sessions", json={"items": [{"id": "pack_100"}]},

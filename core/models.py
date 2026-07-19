@@ -43,6 +43,12 @@ class EmailMessage:
         categories: Color categories (Outlook)
         snippet: Short preview of the body (provider-supplied, optional)
         body: Full plain-text body when fetched (optional; used for research)
+        headers: Cheap headers captured at list time, as a {name: value} map
+            (lower-cased names). The mailing-list / bulk / auto markers (list-unsubscribe,
+            list-id, list-post, precedence, auto-submitted) so the classifier can suppress
+            bulk mail from the reply-owed rung, PLUS reply-to so the draft leaf can prefer
+            the sender's stated reply address (see core.protocols.CAPTURE_HEADERS). Empty
+            when a provider does not (or cannot cheaply) supply headers — fail-open.
     """
     id: str
     sender: str
@@ -55,6 +61,7 @@ class EmailMessage:
     categories: Set[str] = field(default_factory=set)
     snippet: str = ""
     body: str = ""
+    headers: Dict[str, str] = field(default_factory=dict)
 
     @property
     def combined_text(self) -> str:

@@ -267,24 +267,6 @@ class IMAPProvider(EmailProvider):
             is_read=is_read,
         )
 
-    @staticmethod
-    def _gm_label_value(label: str) -> str:
-        """Format one label as an X-GM-LABELS STORE value (parenthesised list).
-
-        Gmail *system* labels (``\\Inbox``, ``\\Starred``, ``\\Trash``, …) are
-        backslash-prefixed ATOMS and must NOT be quoted: a quoted ``"\\Inbox"``
-        is an invalid IMAP quoted string (``\\I`` is not a legal escape), so
-        Gmail rejects the whole command with ``BAD Could not parse command``.
-        That bug made ``archive()`` a silent 100 %% no-op the first time --apply
-        ran against real Gmail (verified 2026-07-03: 196/196 archive_errors).
-        *User* labels are arbitrary text and MUST be quoted (with any embedded
-        backslash/quote escaped). Both forms go inside a parenthesised list, the
-        documented X-GM-LABELS shape."""
-        if label.startswith("\\"):
-            return f"({label})"
-        escaped = label.replace("\\", "\\\\").replace('"', '\\"')
-        return f'("{escaped}")'
-
     def apply_label(self, message_id: str, label: str) -> bool:
         """
         Add a label to a message.
@@ -294,7 +276,7 @@ class IMAPProvider(EmailProvider):
         """
         if self.use_gmail_extensions:
             return self._checked_store(
-                message_id, "+X-GM-LABELS", self._gm_label_value(label),
+                message_id, "+X-GM-LABELS", f'"{label}"',
                 f"apply Gmail label {label}")
         else:
             # Standard IMAP: copy to folder
@@ -350,65 +332,16 @@ class IMAPProvider(EmailProvider):
             # was rejected, so we must NOT report success (review U086) — else
             # archive() would record the message as having left the inbox.
             return self._checked_store(
-                message_id, "-X-GM-LABELS", self._gm_label_value(label),
+                message_id, "-X-GM-LABELS", f'"{label}"',
                 f"remove Gmail label {label}")
         else:
             logger.warning("remove_label not supported for standard IMAP (folder-based)")
             return False
 
-    def _gmail_archive(self, message_id: str) -> bool:
-        """Archive a Gmail message: remove it from INBOX, KEEP it in All Mail.
-
-        Gmail does NOT expose ``\\Inbox`` in X-GM-LABELS, so
-        ``-X-GM-LABELS \\Inbox`` returns OK but archives NOTHING — a silent
-        no-op verified live 2026-07-03 (store OK, message still in inbox; probed
-        methods A/B both no-op, C/E work). The real primitive is ``+FLAGS
-        \\Deleted`` + a UID-scoped EXPUNGE while INBOX is selected: Gmail treats
-        an expunge from a label view as "drop that label", so the message leaves
-        the inbox but survives in All Mail (reversible; never deleted).
-
-        SAFETY — this is a footgun. From ``[Gmail]/All Mail`` or Trash the same
-        two commands PERMANENTLY delete. So refuse unless INBOX is the selected
-        mailbox, and require UIDPLUS so the EXPUNGE is scoped to THIS uid, never
-        mailbox-wide. On EXPUNGE failure, roll the ``\\Deleted`` flag back so a
-        message is never left hidden-but-present."""
-        if self._current_mailbox != "INBOX":
-            logger.error(
-                "gmail archive refused: selected mailbox is %r, not INBOX — a "
-                "\\Deleted+EXPUNGE there would delete, not archive.",
-                self._current_mailbox)
-            return False
-        # NB: we intentionally do NOT gate on _server_supports("UIDPLUS"). Gmail
-        # always supports UIDPLUS and honours a UID-scoped EXPUNGE (proven live
-        # 2026-07-03 by a probe on the real mailbox), but imaplib's capability
-        # tuple does not reliably list UIDPLUS after Gmail login, so the check
-        # returned False and refused every archive (archived=0, archive_errors=
-        # 193). use_gmail_extensions already implies Gmail, so the scoped
-        # ``UID EXPUNGE`` below is safe; the load-bearing guard is the INBOX-only
-        # check above (which prevents a delete from All Mail/Trash).
-        if not self._checked_store(message_id, "+FLAGS", r"(\Deleted)",
-                                   "flag \\Deleted for gmail archive"):
-            return False
-        try:
-            res, _ = self._connection.uid("EXPUNGE", message_id)
-        except Exception as e:
-            res = None
-            logger.error(f"gmail archive: scoped EXPUNGE raised for {message_id}: {e}")
-        if res != "OK":
-            # Never leave a message flagged \Deleted-but-present (clients hide it).
-            self._connection.uid("STORE", message_id, "-FLAGS", r"(\Deleted)")
-            logger.error(
-                f"gmail archive: scoped EXPUNGE returned {res} for {message_id}; "
-                "rolled back \\Deleted — not archived.")
-            return False
-        return True
-
     def archive(self, message_id: str) -> bool:
         """Archive a message.
 
-        Gmail extensions: remove from INBOX via ``\\Deleted`` + a UID-scoped
-        EXPUNGE (message stays in All Mail). ``-X-GM-LABELS \\Inbox`` is a silent
-        no-op on Gmail — see _gmail_archive.
+        Gmail extensions: drop the ``\\Inbox`` label (a true archive).
 
         Standard IMAP: relocate to the Archive folder, reporting success ONLY
         when the message actually LEFT the source mailbox — via atomic UID MOVE
@@ -420,7 +353,7 @@ class IMAPProvider(EmailProvider):
         recorded ``did_leave_inbox=True`` for a message still in the inbox
         (review U131)."""
         if self.use_gmail_extensions:
-            return self._gmail_archive(message_id)
+            return self.remove_label(message_id, "\\Inbox")
 
         try:
             # Preferred: atomic, server-side UID MOVE. Trust its result and never
@@ -491,114 +424,3 @@ class IMAPProvider(EmailProvider):
         """Mark message as unread."""
         return self._checked_store(
             message_id, "-FLAGS", r"(\Seen)", "mark unread")
-
-    def append(self, message_bytes: bytes,
-               mailbox: str = "[Gmail]/Drafts") -> bool:
-        """Persist a raw RFC822 message into ``mailbox`` via IMAP APPEND — the keyless,
-        TCC-free way to save a DRAFT. NEVER sends: APPEND only writes to a mailbox, so
-        there is structurally no send path here.
-
-        This is the headless counterpart to MailAppProvider.create_draft: instead of
-        driving Apple Mail through AppleScript (which needs the one-time macOS Automation
-        grant — lever L-MAIL-AUTOMATION-GRANT #960), it logs into Gmail over the
-        app-password and APPENDs the message to ``[Gmail]/Drafts`` with the ``\\Draft``
-        flag. Drafts is a REAL folder on Gmail (unlike the label-backed inbox), so it
-        sticks reliably.
-
-        Honesty: imaplib raises only on ``BAD``; a server ``NO`` (quota, ACL, unknown
-        mailbox) comes back as a normal ``('NO', ...)`` tuple — so we report True ONLY on
-        an ``OK`` response, mirroring ``_checked_store`` (review U085/U131 precedent)."""
-        self.connect()  # idempotent — no-op if already connected
-        payload = message_bytes if isinstance(message_bytes, bytes) else str(message_bytes).encode("utf-8")
-        try:
-            typ, _ = self._connection.append(mailbox, r"(\Draft)", None, payload)
-        except Exception as e:
-            logger.error(f"IMAP APPEND to {mailbox} failed: {e}")
-            return False
-        if typ != "OK":
-            logger.error(f"IMAP APPEND to {mailbox} returned {typ}")
-            return False
-        return True
-
-    def create_draft(self, to_addr: str, subject: str, body: str,
-                     account: Optional[str] = None) -> bool:
-        """Save a DRAFT (never sent) to Gmail headlessly — the keyed mirror of
-        MailAppProvider.create_draft. Builds an RFC822 reply message and APPENDs it to
-        ``[Gmail]/Drafts`` over the app-password; no AppleScript, no TCC grant.
-
-        ``From`` is the authenticated mailbox (``self.user``); ``account`` (an Apple-Mail
-        account NAME in the caller) is accepted for signature parity but ignored here —
-        the keyed path always writes to the Gmail account it is logged into. Any ``Re:``
-        prefix is added at most once. This NEVER sends (see ``append``)."""
-        from email.message import EmailMessage as _Msg
-        msg = _Msg()
-        msg["From"] = self.user or ""
-        msg["To"] = to_addr
-        subj = subject or ""
-        msg["Subject"] = subj if subj.lower().startswith("re:") else f"Re: {subj}".strip()
-        msg.set_content(body or "")
-        return self.append(msg.as_bytes(), "[Gmail]/Drafts")
-
-    @staticmethod
-    def _norm_subject(subject: str) -> str:
-        """Strip repeated ``Re:``/``Fwd:``/``Fw:`` prefixes down to the bare
-        subject stem, so an inbound message ("Foo") and its reply ("Re: Foo")
-        match the same thread when searched by SUBJECT."""
-        s = (subject or "").strip()
-        low = s.lower()
-        while True:
-            for p in ("re:", "fwd:", "fw:"):
-                if low.startswith(p):
-                    s = s[len(p):].strip()
-                    low = s.lower()
-                    break
-            else:
-                break
-        return s
-
-    def _search_mailbox(self, mailbox: str, to_addr: str, subject: str) -> bool:
-        """True iff ``mailbox`` holds ≥1 message ``TO`` ``to_addr`` whose SUBJECT
-        contains the (Re:-stripped) ``subject`` stem.
-
-        FAIL-OPEN by design: any error, non-OK response, or empty subject/addr
-        returns ``False`` (→ "not handled" → the caller still drafts). Wrongly
-        suppressing a genuine reply-owed draft is worse than a possible
-        duplicate, so the safe default on uncertainty is to draft. SELECT is
-        read-only — this method never mutates the mailbox."""
-        stem = self._norm_subject(subject)
-        if not to_addr or not stem:
-            return False
-        try:
-            res, _ = self._connection.select(mailbox, readonly=True)
-            if res != "OK":
-                return False
-            self._current_mailbox = mailbox
-            typ, data = self._connection.uid(
-                "search", None, "TO", f'"{to_addr}"', "SUBJECT", f'"{stem}"')
-            if typ != "OK" or not data or not data[0]:
-                return False
-            return bool(data[0].split())
-        except Exception as e:  # noqa: BLE001 — fail-open (see docstring)
-            logger.debug(f"handled-check search in {mailbox} failed: {e}")
-            return False
-
-    def thread_already_handled(self, to_addr: str, subject: str,
-                               sent_mailbox: Optional[str] = None,
-                               drafts_mailbox: str = "[Gmail]/Drafts") -> bool:
-        """Server-truth reconciliation: is this reply-owed thread ALREADY handled?
-
-        Returns True iff a reply to ``to_addr`` with this subject stem already
-        exists in the Sent folder (the operator already answered) OR a draft
-        already exists in Drafts (dedup). The draft leaf calls this before every
-        APPEND to skip both already-answered threads and duplicate drafts — the
-        fix for stale/triplicate drafts. It keys on the SERVER's own state, so
-        it is robust where the local ``drafts_created.json`` idempotency file is
-        not: a lost/reset state file, or one sender reachable at two addresses
-        (which produce two different domain-keyed idempotency keys and so slip
-        past local dedup — exactly how three copies of one legal reply were
-        created). FAIL-OPEN throughout (see ``_search_mailbox``)."""
-        self.connect()  # idempotent
-        sent = sent_mailbox or os.getenv("LIMEN_MAIL_SENT_MAILBOX", "[Gmail]/Sent Mail")
-        if self._search_mailbox(sent, to_addr, subject):
-            return True
-        return self._search_mailbox(drafts_mailbox, to_addr, subject)

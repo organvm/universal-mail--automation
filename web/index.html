@@ -669,6 +669,13 @@
   .plan-reveal[open] summary::after { content: "-"; }
   .plan-reveal-body { padding: 11px; display: grid; gap: 10px; }
 
+  .api-key-reveal { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-2); }
+  .api-key-reveal p { margin: 0 0 8px; font-size: 13px; }
+  .api-key-reveal p:last-child { margin-top: 8px; margin-bottom: 0; }
+  .api-key-row { display: flex; gap: 8px; align-items: center; }
+  .api-key-row input { flex: 1; font-family: monospace; font-size: 13px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: #fff; color: var(--ink); }
+  .btn-sm { padding: 5px 12px; font-size: 13px; white-space: nowrap; }
+
   .agent-grid {
     display: grid;
     grid-template-columns: .92fr 1.08fr;
@@ -1299,13 +1306,10 @@ $("previewBtn").addEventListener("click", async () => {
     out.innerHTML = `<div class="notice err">${escapeHtml(data.detail)}</div>`;
     return;
   }
-  const result = data && data.packet && data.packet.payload && data.packet.payload.result
-    ? data.packet.payload.result
-    : data;
-  const a = result && result.audit || {};
+  const a = data.audit || {};
   const viol = (a.violations || []).length;
   out.innerHTML = `
-    <div class="receipt">${escapeHtml(result.receipt || "")}</div>
+    <div class="receipt">${escapeHtml(data.receipt || "")}</div>
     <table>
       <tr><th>Disposition</th><th>Count</th></tr>
       <tr><td>Protected - held in inbox</td><td class="held">${a.protected_held ?? 0}</td></tr>
@@ -1332,10 +1336,13 @@ async function startCheckout(planId, btn) {
   btn.disabled = true;
   btn.textContent = "Redirecting...";
   const { ok, status, data } = await postJSON("/v1/billing/checkout", { plan: planId, email });
-  if (data && data.account_api_key) {
-    try { localStorage.setItem("uma-pending-key", data.account_api_key); } catch (e) {}
+  if (ok && data && data.url) {
+    if (data.account_api_key) {
+      try { localStorage.setItem("uma-pending-key", data.account_api_key); } catch (e) { /* private mode */ }
+    }
+    window.location.href = data.url;
+    return;
   }
-  if (ok && data && data.url) { window.location.href = data.url; return; }
   btn.disabled = false;
   btn.textContent = prev;
   if (status === 503) {
@@ -1350,9 +1357,6 @@ function renderPlans(plans, staticCheckout) {
   out.innerHTML = "";
   plans.forEach((p) => {
     const cap = p.monthly_run_cap == null ? "Unlimited runs" : `${Number(p.monthly_run_cap).toLocaleString()} runs / mo`;
-    const features = Array.isArray(p.features) && p.features.length
-      ? p.features
-      : [cap, `Providers: ${p.providers || "-"}`, "Gate and receipts"];
     const card = document.createElement("div");
     card.className = "plan" + (p.id === "pro" ? " feature" : "");
     const buyable = PURCHASABLE[p.id];
@@ -1364,7 +1368,10 @@ function renderPlans(plans, staticCheckout) {
         <div class="plan-reveal-body">
           <div class="blurb">${escapeHtml(p.blurb || "")}</div>
           <ul>
-            ${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join("")}
+            ${(Array.isArray(p.features) && p.features.length
+              ? p.features
+              : [cap, `Providers: ${p.providers || "-"}`, "Gate and receipts"]
+            ).map(f => `<li>${escapeHtml(f)}</li>`).join("")}
           </ul>
         </div>
       </details>`;
@@ -1404,15 +1411,15 @@ function renderPlans(plans, staticCheckout) {
   if (!b) return;
   const msg = $("billingMsg");
   if (msg && b === "success") {
-    let keyHtml = "";
+    let keyBlock = "";
     try {
       const k = localStorage.getItem("uma-pending-key");
       if (k) {
-        keyHtml = `<br><br><strong>Important:</strong> Save your API key now. It will not be shown again.<br><code class="api-key-reveal" style="user-select: all; display: inline-block; margin-top: 6px; padding: 6px 10px; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: 14px; color: var(--ink);">Authorization: Bearer ${escapeHtml(k)}</code>`;
+        keyBlock = `<div class="api-key-reveal"><p>Your API key — copy it now, it won't be shown again:</p><div class="api-key-row"><input id="apiKeyOut" type="text" readonly value="${escapeHtml(k)}" onclick="this.select()" /><button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('apiKeyOut').value).then(()=>this.textContent='Copied!').catch(()=>{})">Copy</button></div><p class="meta">Pass it as <code>Authorization: Bearer &lt;key&gt;</code> on <code>POST /v1/triage</code>.</p></div>`;
         localStorage.removeItem("uma-pending-key");
       }
-    } catch (e) {}
-    msg.innerHTML = `<div class="notice ok">Subscription active. Receipt retention is enabled.${keyHtml}</div>`;
+    } catch (e) { /* private mode */ }
+    msg.innerHTML = `<div class="notice ok">Subscription active. Receipt retention is enabled.</div>${keyBlock}`;
   }
   if (msg && b === "cancel") msg.innerHTML = `<div class="notice warn">Checkout canceled. No charge made.</div>`;
   document.getElementById("plans-title").scrollIntoView();

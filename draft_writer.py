@@ -67,63 +67,6 @@ def compose(profile, ob, name: str) -> str:
     return text.strip() + "\n"
 
 
-def _select_saver(save: bool):
-    """Choose the draft-save transport and return ``(save_fn, close_fn, handled_fn)``.
-
-    Prefers the KEYED, HEADLESS IMAP APPEND path (``IMAPProvider.create_draft`` →
-    ``[Gmail]/Drafts``) whenever the Gmail app-password is hydrated in the env
-    (``GMAIL_APP_PASSWORD``/``IMAP_PASS`` + a user) — that path needs no macOS
-    Automation grant, so it designs out lever L-MAIL-AUTOMATION-GRANT (#960). With no
-    key present it FALLS BACK to the Apple-Mail AppleScript path (today's behaviour,
-    unchanged). Either way nothing is ever sent — both transports only write a Draft.
-
-    ``save_fn(to_addr, subject, body, account=None) -> bool``; ``close_fn`` (or None)
-    releases the keyed connection at the end; ``handled_fn(to_addr, subject) -> bool``
-    (or None) is the server-truth reconciliation check — True when a reply already
-    exists in Sent or a draft already exists in Drafts, so the caller skips it (the
-    fix for stale/triplicate drafts). Only the keyed IMAP path can see Sent/Drafts on
-    the server, so ``handled_fn`` is None for the AppleScript and enrich-only paths.
-    Returns ``(None, None, None)`` for enrich-only."""
-    if not save:
-        return None, None, None
-
-    user = os.environ.get("IMAP_USER") or os.environ.get("GMAIL_USER")
-    pw = os.environ.get("IMAP_PASS") or os.environ.get("GMAIL_APP_PASSWORD")
-    if user and pw:
-        try:
-            from providers.imap import IMAPProvider
-            prov = IMAPProvider(user=user, password=pw, use_gmail_extensions=True)  # allow-secret
-
-            def _save(to_addr, subject, body, account=None):
-                return prov.create_draft(to_addr, subject, body, account=account)
-
-            def _close():
-                try:
-                    prov.disconnect()
-                except Exception:  # noqa: BLE001 — cleanup must never raise into the beat
-                    pass
-
-            def _handled(to_addr, subject):
-                return prov.thread_already_handled(to_addr, subject)
-
-            print("draft_writer: keyed IMAP draft path (headless — no Automation grant)")
-            return _save, _close, _handled
-        except Exception as e:  # pragma: no cover — import/construct guard, fail-open below
-            print(f"draft_writer: IMAP keyed path unavailable ({e}); falling back to Apple Mail")
-
-    try:
-        from providers.mailapp import MailAppProvider
-
-        def _save(to_addr, subject, body, account=None):
-            return MailAppProvider(account=account).create_draft(
-                to_addr, subject, body, account=account)
-
-        return _save, None, None
-    except Exception as e:  # pragma: no cover
-        print(f"draft_writer: MailApp unavailable ({e}); enrich-only")
-        return None, None, None
-
-
 def _load_state():
     try:
         return set(json.loads(open(_STATE).read()))
@@ -158,17 +101,21 @@ def main(argv=None):
     profile = load_voice_profile(name=args.name)
     obligations = ledger.get("obligations", [])
     state = _load_state()
-    enriched = saved = skipped = reconciled = 0
+    enriched = saved = skipped = 0
 
-    save_fn, close_fn, handled_fn = _select_saver(args.save)
+    provider = None
+    if args.save:
+        try:
+            from providers.mailapp import MailAppProvider
+            provider = MailAppProvider  # constructed per-account below
+        except Exception as e:  # pragma: no cover
+            print(f"draft_writer: MailApp unavailable ({e}); enrich-only")
+            provider = None
 
     for ob in obligations:
         if not ob.get("requires_reply"):
             continue
-        # Prefer Reply-To (where the sender actually wants replies — InMail relays and role
-        # senders thread back through a distinct reply-* address) over the raw From. Both are
-        # normalised through _addr, so a "Name <addr>" Reply-To resolves to the bare address.
-        to_addr = _addr(ob.get("reply_to") or "") or _addr(ob.get("sender", ""))
+        to_addr = _addr(ob.get("sender", ""))
         # only draft to a real, replyable address (skip relay/role/no-address)
         if "@" not in to_addr or "privaterelay.appleid.com" in to_addr:
             continue
@@ -176,7 +123,7 @@ def main(argv=None):
         ob["draft_to"] = to_addr
         enriched += 1
 
-        if save_fn is not None and saved < args.max:
+        if provider is not None and saved < args.max:
             key = _ob_key(ob)
             if key in state:
                 ob["draft_saved"] = True
@@ -185,26 +132,9 @@ def main(argv=None):
             account = (ob.get("accounts") or [None])[0]
             subj = (ob.get("sample_subjects") or [""])[0]
             re_subj = subj if subj.lower().startswith("re:") else f"Re: {subj}".strip()
-
-            # Server-truth reconciliation (fix for stale/triplicate drafts): if a
-            # reply already sits in Sent (operator answered) or a draft already
-            # sits in Drafts (dedup), skip — never re-draft a handled thread.
-            # Fail-open: handled_fn already swallows errors → False → we draft.
-            if handled_fn is not None:
-                try:
-                    already = handled_fn(to_addr, subj or re_subj)
-                except Exception:
-                    already = False
-                if already:
-                    ob["already_handled"] = True
-                    ob["draft_saved"] = True
-                    state.add(key)
-                    _save_state(state)
-                    reconciled += 1
-                    continue
-
             try:
-                ok = save_fn(to_addr, re_subj or "(no subject)", ob["draft_text"], account=account)
+                ok = provider(account=account).create_draft(
+                    to_addr, re_subj or "(no subject)", ob["draft_text"], account=account)
             except Exception:
                 ok = False
             if ok:
@@ -216,16 +146,12 @@ def main(argv=None):
 
     if args.save:
         _save_state(state)
-        if close_fn:
-            close_fn()
 
     with open(args.ledger, "w") as f:
         json.dump(ledger, f, indent=2)
 
     print(f"draft_writer: enriched {enriched} reply drafts"
-          + (f"; saved {saved} new to Drafts ({skipped} already present, "
-             f"{reconciled} skipped — already answered/drafted on the server)"
-             if args.save else " (enrich-only)")
+          + (f"; saved {saved} new to Drafts ({skipped} already present)" if args.save else " (enrich-only)")
           + f" → {args.ledger}")
     return 0
 

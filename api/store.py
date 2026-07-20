@@ -32,8 +32,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from collections.abc import Mapping, Sequence
-from typing import Literal, TypeAlias, TypedDict, cast
+from typing import Any, Dict, List, Optional
 
 # Default on-disk location. Kept under data/ which is gitignored (see .gitignore):
 # this file holds customer ids and api keys and must never be committed.
@@ -111,89 +110,6 @@ CREATE TABLE IF NOT EXISTS usage_counters (
 # window we treat a 'processing' entry as abandoned and let a retry re-claim it.
 IDEMPOTENCY_PROCESSING_TIMEOUT = 60.0  # seconds
 
-JsonScalar: TypeAlias = str | int | float | bool | None
-JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
-JsonObject: TypeAlias = dict[str, JsonValue]
-JsonMapping: TypeAlias = Mapping[str, JsonValue]
-SqlValue: TypeAlias = str | int | float | bytes | None
-SqlParams: TypeAlias = Sequence[SqlValue]
-StoreRow: TypeAlias = dict[str, JsonValue]
-
-
-class AccountRow(TypedDict):
-    id: str
-    email: str | None
-    stripe_customer_id: str | None
-    stripe_subscription_id: str | None
-    plan: str
-    status: str
-    current_period_end: int | None
-    api_key: str | None
-    run_credits: int
-    created_at: float
-    updated_at: float
-
-
-class ReceiptRow(TypedDict):
-    run_id: str
-    account_id: str | None
-    provider: str | None
-    dry_run: bool
-    receipt_line: str | None
-    signature: str | None
-    created_at: float
-    summary: JsonValue
-
-
-class ReceiptListRow(TypedDict):
-    run_id: str
-    provider: str | None
-    dry_run: bool
-    receipt_line: str | None
-    created_at: float
-
-
-class FulfillmentRow(TypedDict):
-    session_id: str
-    account_id: str | None
-    runs: int
-    fulfilled_at: float
-
-
-class ACPSessionRow(TypedDict):
-    id: str
-    status: str
-    currency: str | None
-    account_id: str | None
-    data: JsonObject
-    created_at: float
-    updated_at: float
-
-
-class IdempotencyNewResult(TypedDict):
-    state: Literal["new"]
-
-
-class IdempotencyProcessingResult(TypedDict):
-    state: Literal["processing"]
-
-
-class IdempotencyConflictResult(TypedDict):
-    state: Literal["conflict"]
-
-
-class IdempotencyReplayResult(TypedDict):
-    state: Literal["replay"]
-    response: JsonObject
-
-
-IdempotencyBeginResult: TypeAlias = (
-    IdempotencyNewResult
-    | IdempotencyProcessingResult
-    | IdempotencyConflictResult
-    | IdempotencyReplayResult
-)
-
 
 def _now() -> float:
     return time.time()
@@ -204,43 +120,10 @@ def new_api_key() -> str:
     return "uma_" + secrets.token_urlsafe(32)
 
 
-def _decode_json(encoded: JsonValue) -> JsonValue:
-    if not isinstance(encoded, str):
-        raise TypeError("stored JSON payload is not text")
-    return cast(JsonValue, json.loads(encoded))
-
-
-def _decode_json_object(encoded: JsonValue) -> JsonObject:
-    decoded = _decode_json(encoded)
-    if not isinstance(decoded, dict):
-        raise TypeError("stored JSON payload is not an object")
-    return decoded
-
-
-def _as_int(value: JsonValue) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int | float | str):
-        return int(value)
-    raise TypeError(f"stored value is not integer-like: {value!r}")
-
-
-def _as_float(value: JsonValue) -> float:
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, int | float | str):
-        return float(value)
-    raise TypeError(f"stored value is not numeric-like: {value!r}")
-
-
-def _row_to_dict(row: sqlite3.Row) -> StoreRow:
-    return {key: cast(JsonValue, row[key]) for key in row.keys()}
-
-
 class Store:
     """A thread-safe SQLite-backed store. One connection, one lock, WAL reads."""
 
-    def __init__(self, path: str = DEFAULT_DB_PATH) -> None:
+    def __init__(self, path: str = DEFAULT_DB_PATH):
         self.path = path
         if path != ":memory:":
             parent = os.path.dirname(os.path.abspath(path))
@@ -270,13 +153,13 @@ class Store:
     def create_account(
         self,
         *,
-        account_id: str | None = None,
-        email: str | None = None,
+        account_id: Optional[str] = None,
+        email: Optional[str] = None,
         plan: str = "free",
         status: str = "active",
-        api_key: str | None = None,  # allow-secret: param declaration, not a value
+        api_key: Optional[str] = None,  # allow-secret: param declaration, not a value
         run_credits: int = 0,
-    ) -> AccountRow:
+    ) -> Dict[str, Any]:
         account_id = account_id or ("acct_" + secrets.token_hex(12))
         api_key = api_key or new_api_key()  # allow-secret: generated, not a literal
         now = _now()
@@ -287,33 +170,24 @@ class Store:
                 (account_id, email, plan, status, api_key, run_credits, now, now),
             )
             self._conn.commit()
-        created = self.get_account(account_id)
-        if created is None:  # pragma: no cover - defensive invariant
-            raise RuntimeError("account creation failed")
-        return created
+        return self.get_account(account_id)  # type: ignore[return-value]
 
-    def get_account(self, account_id: str) -> AccountRow | None:
-        return cast(
-            AccountRow | None,
-            self._fetch_one("SELECT * FROM accounts WHERE id = ?", (account_id,)),
-        )
+    def get_account(self, account_id: str) -> Optional[Dict[str, Any]]:
+        return self._fetch_one("SELECT * FROM accounts WHERE id = ?", (account_id,))
 
     def get_account_by_api_key(
         self, api_key: str  # allow-secret: param name, not a value
-    ) -> AccountRow | None:
+    ) -> Optional[Dict[str, Any]]:
         if not api_key:
             return None
-        return cast(
-            AccountRow | None,
-            self._fetch_one(
-                "SELECT * FROM accounts WHERE api_key = ?",  # allow-secret: SQL column
-                (api_key,),  # allow-secret: SQL placeholder
-            ),
+        return self._fetch_one(
+            "SELECT * FROM accounts WHERE api_key = ?",  # allow-secret: SQL column
+            (api_key,),  # allow-secret: SQL placeholder
         )
 
     def get_or_create_account_by_api_key(
         self, api_key: str, *, plan: str = "free", status: str = "active"  # allow-secret: param name, not a value
-    ) -> AccountRow:
+    ) -> Dict[str, Any]:
         """Return the account for ``api_key``, creating it atomically if absent."""
         with self._lock:
             existing = self._fetch_one_nolock(
@@ -321,7 +195,7 @@ class Store:
                 (api_key,),  # allow-secret: SQL placeholder
             )
             if existing is not None:
-                return cast(AccountRow, existing)
+                return existing
 
             account_id = "acct_" + secrets.token_hex(12)
             now = _now()
@@ -336,16 +210,16 @@ class Store:
             )
             if created is None:  # pragma: no cover - defensive invariant
                 raise RuntimeError("account creation failed")
-            return cast(AccountRow, created)
+            return created
 
     def get_or_create_account_for_customer(
         self,
-        customer_id: str | None,
+        customer_id: Optional[str],
         *,
-        account_id: str | None = None,
+        account_id: Optional[str] = None,
         plan: str = "free",
         status: str = "active",
-    ) -> AccountRow:
+    ) -> Dict[str, Any]:
         """Return the account for a Stripe customer, creating the mapping once.
 
         Stripe events can arrive concurrently or with conflicting metadata. The
@@ -361,14 +235,14 @@ class Store:
                     (customer_id,),
                 )
                 if existing is not None:
-                    return cast(AccountRow, existing)
+                    return existing
 
             if account_id:
                 existing = self._fetch_one_nolock(
                     "SELECT * FROM accounts WHERE id = ?", (account_id,)
                 )
                 if existing is not None:
-                    return cast(AccountRow, existing)
+                    return existing
 
             new_id = account_id or ("acct_" + secrets.token_hex(12))
             now = _now()
@@ -388,13 +262,13 @@ class Store:
                         (customer_id,),
                     )
                     if existing is not None:
-                        return cast(AccountRow, existing)
+                        return existing
                 if account_id:
                     existing = self._fetch_one_nolock(
                         "SELECT * FROM accounts WHERE id = ?", (account_id,)
                     )
                     if existing is not None:
-                        return cast(AccountRow, existing)
+                        return existing
                 raise
 
             created = self._fetch_one_nolock(
@@ -402,14 +276,11 @@ class Store:
             )
             if created is None:  # pragma: no cover - defensive invariant
                 raise RuntimeError("account creation failed")
-            return cast(AccountRow, created)
+            return created
 
-    def get_account_by_customer(self, customer_id: str) -> AccountRow | None:
-        return cast(
-            AccountRow | None,
-            self._fetch_one(
-                "SELECT * FROM accounts WHERE stripe_customer_id = ?", (customer_id,)
-            ),
+    def get_account_by_customer(self, customer_id: str) -> Optional[Dict[str, Any]]:
+        return self._fetch_one(
+            "SELECT * FROM accounts WHERE stripe_customer_id = ?", (customer_id,)
         )
 
     def link_customer(self, account_id: str, customer_id: str) -> None:
@@ -425,17 +296,17 @@ class Store:
         self,
         *,
         account_id: str,
-        customer_id: str | None = None,
-        subscription_id: str | None = None,
-        plan: str | None = None,
-        status: str | None = None,
-        current_period_end: int | None = None,
+        customer_id: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+        plan: Optional[str] = None,
+        status: Optional[str] = None,
+        current_period_end: Optional[int] = None,
     ) -> None:
         """Apply a subscription state change. Only non-None fields are written, so
         a partial event (e.g. an invoice.paid that only refreshes period_end)
         never clobbers fields it does not carry."""
-        sets: list[str] = ["updated_at = ?"]
-        vals: list[SqlValue] = [_now()]
+        sets: List[str] = ["updated_at = ?"]
+        vals: List[Any] = [_now()]
         for col, val in (
             ("stripe_customer_id", customer_id),
             ("stripe_subscription_id", subscription_id),
@@ -463,7 +334,7 @@ class Store:
             )
             self._conn.commit()
         acct = self.get_account(account_id)
-        return _as_int(acct["run_credits"]) if acct else 0
+        return int(acct["run_credits"]) if acct else 0
 
     def consume_credit(self, account_id: str, n: int = 1) -> bool:
         """Atomically debit ``n`` credits iff the balance covers it. The UPDATE's
@@ -479,7 +350,7 @@ class Store:
             return cur.rowcount > 0
 
     # -- usage metering -----------------------------------------------------
-    def reserve_live_run(self, account_id: str, period: str, cap: int | None) -> bool:
+    def reserve_live_run(self, account_id: str, period: str, cap: Optional[int]) -> bool:
         """Atomically reserve one live triage run within ``cap`` for ``period``.
 
         ``cap=None`` means unlimited. The counter is incremented before mailbox
@@ -525,7 +396,7 @@ class Store:
             "AND period = ?",
             (account_id, period),
         )
-        return _as_int(row["live_runs"]) if row else 0
+        return int(row["live_runs"]) if row else 0
 
     # -- webhook dedup ------------------------------------------------------
     def mark_event_processed(self, event_id: str, event_type: str = "") -> bool:
@@ -552,12 +423,12 @@ class Store:
         self,
         *,
         run_id: str,
-        summary: JsonMapping,
-        provider: str | None,
+        summary: Dict[str, Any],
+        provider: Optional[str],
         dry_run: bool,
         receipt_line: str,
         signature: str,
-        account_id: str | None = None,
+        account_id: Optional[str] = None,
     ) -> None:
         with self._lock:
             self._conn.execute(
@@ -571,17 +442,17 @@ class Store:
             )
             self._conn.commit()
 
-    def get_receipt(self, run_id: str) -> ReceiptRow | None:
+    def get_receipt(self, run_id: str) -> Optional[Dict[str, Any]]:
         row = self._fetch_one("SELECT * FROM receipts WHERE run_id = ?", (run_id,))
         if row is None:
             return None
-        row["summary"] = _decode_json(row.pop("summary_json"))
+        row["summary"] = json.loads(row.pop("summary_json"))
         row["dry_run"] = bool(row["dry_run"])
-        return cast(ReceiptRow, row)
+        return row
 
     def list_receipts(
         self, account_id: str, limit: int = 100
-    ) -> list[ReceiptListRow]:
+    ) -> List[Dict[str, Any]]:
         rows = self._fetch_all(
             "SELECT run_id, provider, dry_run, receipt_line, created_at "
             "FROM receipts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?",
@@ -589,12 +460,12 @@ class Store:
         )
         for r in rows:
             r["dry_run"] = bool(r["dry_run"])
-        return cast(list[ReceiptListRow], rows)
+        return rows
 
     # -- idempotency (ACP) --------------------------------------------------
     def idempotency_begin(
         self, key: str, scope: str, request_hash: str
-    ) -> IdempotencyBeginResult:
+    ) -> Dict[str, Any]:
         """Claim an idempotency key. Returns one of:
             {"state": "new"}                         -> proceed, then _complete
             {"state": "processing"}                  -> a concurrent request holds it (409)
@@ -606,28 +477,17 @@ class Store:
                 "SELECT * FROM idempotency_keys WHERE key = ?", (key,)
             )
             if existing is None:
-                # Multi-process hosts can race on INSERT for the same key.
-                # Retry by re-reading the row instead of failing the request
-                # with a unique-constraint error.
-                try:
-                    self._conn.execute(
-                        "INSERT INTO idempotency_keys (key, scope, request_hash, "
-                        "status, created_at) VALUES (?,?,?,?,?)",
-                        (key, scope, request_hash, "processing", _now()),
-                    )
-                    self._conn.commit()
-                    return {"state": "new"}
-                except sqlite3.IntegrityError:
-                    self._conn.rollback()
-                    existing = self._fetch_one_nolock(
-                        "SELECT * FROM idempotency_keys WHERE key = ?", (key,)
-                    )
-                    if existing is None:
-                        raise
+                self._conn.execute(
+                    "INSERT INTO idempotency_keys (key, scope, request_hash, "
+                    "status, created_at) VALUES (?,?,?,?,?)",
+                    (key, scope, request_hash, "processing", _now()),
+                )
+                self._conn.commit()
+                return {"state": "new"}
             if existing["status"] == "processing":
                 # Stale (crashed) claim -> let this request re-claim it, rebinding
                 # to the current payload. Prevents a permanent 409 lockout.
-                if _now() - _as_float(existing["created_at"]) > IDEMPOTENCY_PROCESSING_TIMEOUT:
+                if _now() - existing["created_at"] > IDEMPOTENCY_PROCESSING_TIMEOUT:
                     self._conn.execute(
                         "UPDATE idempotency_keys SET request_hash = ?, "
                         "created_at = ? WHERE key = ?",
@@ -642,10 +502,10 @@ class Store:
                 return {"state": "conflict"}
             return {
                 "state": "replay",
-                "response": _decode_json_object(existing["response_json"] or "{}"),
+                "response": json.loads(existing["response_json"] or "null"),
             }
 
-    def idempotency_complete(self, key: str, response: JsonMapping) -> None:
+    def idempotency_complete(self, key: str, response: Any) -> None:
         with self._lock:
             self._conn.execute(
                 "UPDATE idempotency_keys SET status = 'done', response_json = ? "
@@ -681,17 +541,13 @@ class Store:
             self._conn.commit()
             return True
 
-    def get_fulfillment(self, session_id: str) -> FulfillmentRow | None:
+    def get_fulfillment(self, session_id: str) -> Optional[Dict[str, Any]]:
         """The fulfillment row for ``session_id``, or None if never fulfilled.
 
         Existence means the credit was committed: the session's money state is
         no longer mutable (update/cancel are refused by the ACP router)."""
-        return cast(
-            FulfillmentRow | None,
-            self._fetch_one(
-                "SELECT * FROM acp_fulfillments WHERE session_id = ?", (session_id,)
-            ),
-        )
+        return self._fetch_one(
+            "SELECT * FROM acp_fulfillments WHERE session_id = ?", (session_id,))
 
     # -- ACP sessions -------------------------------------------------------
     def save_session(
@@ -699,9 +555,9 @@ class Store:
         *,
         session_id: str,
         status: str,
-        currency: str | None,
-        data: JsonMapping,
-        account_id: str | None = None,
+        currency: Optional[str],
+        data: Dict[str, Any],
+        account_id: Optional[str] = None,
     ) -> None:
         now = _now()
         with self._lock:
@@ -717,33 +573,33 @@ class Store:
             )
             self._conn.commit()
 
-    def get_session(self, session_id: str) -> ACPSessionRow | None:
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         row = self._fetch_one(
             "SELECT * FROM acp_sessions WHERE id = ?", (session_id,)
         )
         if row is None:
             return None
-        row["data"] = _decode_json_object(row.pop("data_json"))
-        return cast(ACPSessionRow, row)
+        row["data"] = json.loads(row.pop("data_json"))
+        return row
 
     # -- helpers ------------------------------------------------------------
-    def _fetch_one(self, sql: str, params: SqlParams) -> StoreRow | None:
+    def _fetch_one(self, sql: str, params: tuple) -> Optional[Dict[str, Any]]:
         with self._lock:
             return self._fetch_one_nolock(sql, params)
 
-    def _fetch_one_nolock(self, sql: str, params: SqlParams) -> StoreRow | None:
+    def _fetch_one_nolock(self, sql: str, params: tuple) -> Optional[Dict[str, Any]]:
         cur = self._conn.execute(sql, params)
         row = cur.fetchone()
-        return _row_to_dict(row) if row is not None else None
+        return dict(row) if row is not None else None
 
-    def _fetch_all(self, sql: str, params: SqlParams) -> list[StoreRow]:
+    def _fetch_all(self, sql: str, params: tuple) -> List[Dict[str, Any]]:
         with self._lock:
             cur = self._conn.execute(sql, params)
-            return [_row_to_dict(r) for r in cur.fetchall()]
+            return [dict(r) for r in cur.fetchall()]
 
 
 # -- module singleton (injectable for tests) --------------------------------
-_STORE: Store | None = None
+_STORE: Optional[Store] = None
 _STORE_LOCK = threading.Lock()
 
 
@@ -757,7 +613,7 @@ def get_store() -> Store:
     return _STORE
 
 
-def set_store(store: Store | None) -> None:
+def set_store(store: Optional[Store]) -> None:
     """Inject a store (tests) or clear it (pass None) so the next get_store()
     rebuilds from the current MAIL_DB_PATH."""
     global _STORE

@@ -27,7 +27,7 @@ Design notes:
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, List, Mapping, Optional, TypedDict, Union
+from typing import List, Optional, TypedDict
 
 class ProtocolDef(TypedDict):
     cls: str
@@ -78,73 +78,6 @@ def _looks_human(sender: str) -> bool:
                    ("via", "inc", "llc", "bank", "card", "health", "deals", "store",
                     "finance", "co.", "labs", "group", "platform", "pbc"))
     return len(parts) >= 2 and not name.isupper() and "@" not in name and not brandish
-
-
-# RFC 2369 / RFC 3834 / RFC 5322 bulk-mail markers. Their PRESENCE (any of them) means
-# the message was emitted by a mailing list / bulk sender / auto-responder — by definition
-# NOT a personal message, so NO personal reply is ever owed. This is the header-based,
-# provider-agnostic rule that replaces sender-name guessing for the newsletter/transactional
-# storm: `List-Unsubscribe` and `List-Id` mark list/bulk mail; `Precedence: bulk|list|junk|
-# auto_reply` marks bulk/automated mail; `Auto-Submitted` (RFC 3834, anything but "no") marks
-# an auto-generated message. The raw header VALUES never steer a real action — only presence.
-_BULK_HEADER_KEYS = ("list-unsubscribe", "list-id", "list-post")
-_PRECEDENCE_BULK = re.compile(r"(?i)\b(bulk|list|junk|auto[_\-]?reply|auto[_\-]?submitted)\b")
-
-# The exact header field NAMES a provider must capture at list time for the bulk gate to
-# fire. Single source of truth so the fetch layer (providers) and the classifier stay in
-# lockstep — a provider grabs only these (never whole bodies), keeping the fetch cheap.
-BULK_SIGNAL_HEADERS = (
-    "List-Unsubscribe", "List-Id", "List-Post", "Precedence", "Auto-Submitted",
-)
-
-# The full header set the fetch layer captures at list time — the bulk-signal headers PLUS
-# Reply-To. Reply-To is NOT a bulk signal (it never feeds is_bulk_mail); it is captured so a
-# draft/reply can prefer the address the sender actually wants replies at (InMail relays and
-# many role senders set a distinct Reply-To that threads back correctly). Single source of
-# truth for the provider's cheap header grab — still only these named fields, never the body.
-CAPTURE_HEADERS = BULK_SIGNAL_HEADERS + ("Reply-To",)
-
-
-def _normalize_headers(headers: Union[str, "Mapping[str, Any]", None]) -> dict:
-    """Coerce headers (a raw RFC-822 header block, or a name→value mapping) into a
-    lower-cased {name: value} dict. Fail-open: unparseable input → {} (no suppression)."""
-    if not headers:
-        return {}
-    if isinstance(headers, Mapping):
-        return {str(k).strip().lower(): str(v) for k, v in headers.items()}
-    out: dict = {}
-    # Raw header block: fold RFC 5322 continuation lines (leading whitespace), then split
-    # each logical line at the first colon. Later duplicates win (harmless for presence).
-    logical: List[str] = []
-    for line in str(headers).splitlines():
-        if line[:1] in (" ", "\t") and logical:
-            logical[-1] += " " + line.strip()
-        else:
-            logical.append(line)
-    for line in logical:
-        if ":" in line:
-            name, _, val = line.partition(":")
-            out[name.strip().lower()] = val.strip()
-    return out
-
-
-def is_bulk_mail(headers: Union[str, "Mapping[str, Any]", None]) -> bool:
-    """True when the message carries standard bulk/list/auto-response headers — i.e. it was
-    sent to a list or by a machine, never as a personal message. Header-based and
-    domain-agnostic: no sender allow/block list. Absent headers → False (fail-open: an
-    unheadered message falls through to the normal precedent/exploration cascade)."""
-    hdrs = _normalize_headers(headers)
-    if not hdrs:
-        return False
-    if any(k in hdrs for k in _BULK_HEADER_KEYS):
-        return True
-    prec = hdrs.get("precedence", "")
-    if prec and _PRECEDENCE_BULK.search(prec):
-        return True
-    auto = hdrs.get("auto-submitted", "").strip().lower()
-    if auto and auto != "no":
-        return True
-    return False
 
 
 # Each protocol: a class id, a matcher over "sender subject snippet", a consequence
@@ -219,71 +152,6 @@ _PROTOCOLS: List[ProtocolDef] = [
         "draft_hint": None,
         "tags": ["legal"],
     },
-    # ── Inbound-lead family (the positioning surfaces are the lure; these route the bite) ──
-    # A warm inbound — a recruiter/client who wrote FIRST. requires_reply=True, but NO
-    # money/legal/security tags: an opportunity is low-stakes SAFE-tier eligible (an offer
-    # is DECIDED, not held — held is for legal/money), so its tag set is deliberately
-    # {opportunity, …} only. Sits BELOW every consequential class (security/fraud/loan/
-    # billing/kyc/legal-sign) so a spoofed "opportunity" that also trips fraud/kyc is caught
-    # there first (first-match-wins by list order). The draft encodes "no hoops": reply BY
-    # EMAIL, external ATS/portal forms are not completed.
-    # inbound-linkedin FIRST in the family: a linkedin.com InMail/connect/view is a real
-    # inbound but arrives through a noreply relay (structurally unsendable), so it must route
-    # HERE, not to inbound-lead-hire (whose broad "InMail" token would otherwise swallow it).
-    # Lookaheads scan the whole haystack ("sender subject snippet label"): host linkedin.com
-    # AND a message signal, EXCLUDING the job-alert/jobs-you-may/network-digest blasts (which
-    # are not a person writing you). Classifies DESPITE List-Unsubscribe + a noreply sender —
-    # that is exactly the point: the protocol match outranks the bulk-header gate.
-    {
-        "cls": "inbound-linkedin",
-        "match": re.compile(r"(?ix) ((?=.*linkedin\.com)"
-                            r"(?=.*(in[\s-]?mail|sent\s*you\s*a\s*message|"
-                            r"message\s*replied|hit-reply|"
-                            r"wants\s*to\s*connect|viewed\s*your\s*profile))"
-                            r"(?!.*(job\s*alert|jobs\s*you\s*may|hiring\s*in\s*your\s*network)))"),
-        "priority": 70, "verify_first": False, "requires_reply": True,
-        "next_step": "A LinkedIn inbound (InMail / connect / profile-view) — real signal "
-                     "arriving through a noreply relay. Reply IN LinkedIn, or steer it to an "
-                     "email path so the thread lives where you can act on it.",
-        "draft_hint": "Thanks for the note. I keep opportunity conversations in email — "
-                      "could you send the details to my address, or share yours and I'll "
-                      "follow up there? Happy to go deeper once we're on email.",
-        "tags": ["opportunity"],
-    },
-    {
-        "cls": "inbound-lead-hire",
-        "match": re.compile(r"(?ix) (\[[^\]]+·\s*hire\]\s*—?\s*inbound|"
-                            r"recruiter|sourcing|talent\s*acquisition|talent\s*partner|"
-                            r"role\s*at|position\s*at|hiring\s*for|"
-                            r"opportunity\s*(at|with)|in[\s-]?mail)"),
-        "priority": 76, "verify_first": False, "requires_reply": True,
-        "next_step": "A recruiter wrote you FIRST — a warm hire lead. Reply by email, no "
-                     "portal hoops: thank them, say you're interested, and ask for the JD, "
-                     "comp range, process shape, and end-client (if agency), all by email.",
-        "draft_hint": "Thanks — I'm interested. To move efficiently, could you send by email: "
-                      "(1) the job description, (2) the comp range / rate, (3) the process shape "
-                      "and how many rounds, and (4) the end-client if this is through an agency? "
-                      "I keep hiring conversations in email and don't complete external ATS or "
-                      "portal forms up front. Happy to share availability windows by email once I "
-                      "have those.",
-        "tags": ["opportunity", "career"],
-    },
-    {
-        "cls": "inbound-lead-deploy",
-        "match": re.compile(r"(?ix) (\[[^\]]+·\s*deploy\]|"
-                            r"consult(ing|ation)?|engagement|proposal|quote|deploy|"
-                            r"build\s*(this|it)\s*for)"),
-        "priority": 76, "verify_first": False, "requires_reply": True,
-        "next_step": "A prospective client wrote you FIRST — a warm deploy lead. Reply by "
-                     "email: acknowledge, ask which engagement depth fits, and propose an "
-                     "email-first next step.",
-        "draft_hint": "Thanks for reaching out. To point you at the right shape, which "
-                      "engagement depth fits: a data/API feed, a white-label surface, a "
-                      "custom build, or an embedded engagement? Reply by email with a sentence "
-                      "on the outcome you want and I'll send back a concrete next step — I keep "
-                      "these conversations in email rather than external portals.",
-        "tags": ["opportunity", "client"],
-    },
     {
         "cls": "legal-correspondence",
         "match": re.compile(r"(?ix) (protected message|litigation|attorney|counsel|"
@@ -305,21 +173,6 @@ _PROTOCOLS: List[ProtocolDef] = [
                      "(the LLCs are dead — lapsing is likely correct, but confirm no live filing).",
         "draft_hint": None,
         "tags": ["money", "legal"],
-    },
-    {
-        "cls": "subscription-renewal",
-        "match": re.compile(r"(?ix) (paid\s+membership|membership\s+confirmation|"
-                            r"membership\s+begins|membership\s+renewal|"
-                            r"((paid\s+)?membership|subscription|plan) .*"
-                            r"(renew|auto[-\s]*renew|charge|billed)|"
-                            r"(renew|auto[-\s]*renew|charge|billed) .*"
-                            r"((paid\s+)?membership|subscription|plan)|"
-                            r"automatically renew|membership fee)"),
-        "priority": 54, "verify_first": False, "requires_reply": False,
-        "next_step": "Decide whether to keep the recurring subscription before the next "
-                     "renewal date; cancel it if it is not actively useful.",
-        "draft_hint": None,
-        "tags": ["money", "subscription"],
     },
     {
         "cls": "domain-renewal",
@@ -354,35 +207,9 @@ _PROTOCOLS: List[ProtocolDef] = [
 ]
 
 
-def requires_reply_match(sender: str, subject: str, label: str = "") -> Optional[str]:
-    """Sweep-tier probe: the class of the first requires_reply protocol matching this
-    envelope, else None.
-
-    Envelope-only (no snippet/headers exist at sweep time), so this is a conservative
-    subset of derive()'s protocol rung. The caller (inbox_sweep.decide) FIRES on a hit:
-    the sweep is the funnel for obligations_build, and it must never drop mail the
-    protocol registry owns — a LinkedIn InMail relay rides a Social label and a noreply
-    sender, and the reply-owed classes are exactly the ones a counterparty is waiting on.
-    Same invariant as the protocol-beats-bulk rung in derive(), applied one tier earlier.
-    """
-    hay = f"{sender} {subject} {label}"
-    for p in _PROTOCOLS:
-        if p["requires_reply"] and p["match"].search(hay):
-            return p["cls"]
-    return None
-
-
 def derive(sender: str, subject: str, label: str = "", tier: int = 4,
-           snippet: str = "",
-           headers: Union[str, "Mapping[str, Any]", None] = None) -> Obligation:
-    """Run the cascade for one surfaced fire and return its owned next step.
-
-    ``headers`` (optional) is the message's raw header block or a name→value mapping. A
-    consequential PROTOCOL always wins first (a billing/fraud/legal notice matters even when
-    it rides a list). Below the protocols, bulk/list/auto headers HARD-SUPPRESS the personal
-    precedent rung: a newsletter or transactional receipt is never a personal reply owed,
-    however human its From name looks. Absent headers → the cascade is unchanged (fail-open).
-    """
+           snippet: str = "") -> Obligation:
+    """Run the cascade for one surfaced fire and return its owned next step."""
     hay = f"{sender} {subject} {snippet} {label}"
 
     for p in _PROTOCOLS:
@@ -393,21 +220,6 @@ def derive(sender: str, subject: str, label: str = "", tier: int = 4,
                 verify_first=p["verify_first"], requires_reply=p["requires_reply"],
                 draft_hint=p["draft_hint"], tags=list(p["tags"]),
             )
-
-    # Bulk gate — sits ABOVE precedent: standard list/bulk/auto headers mean the message was
-    # sent to a list or by a machine, so no personal reply is owed. This is the root-cause fix
-    # for the newsletter/transactional storm that a First-Last display name used to smuggle
-    # through the precedent rung. Header-based and domain-agnostic — never a sender blocklist.
-    if is_bulk_mail(headers):
-        return Obligation(
-            cls="bulk", rung="bulk", priority=20,
-            next_step="Bulk/list/automated mail — no personal reply owed. Unsubscribe or "
-                      "filter it if it's noise; otherwise ignore.",
-            why="bulk: message carries list/bulk/auto headers (List-Unsubscribe / List-Id / "
-                "Precedence: bulk), so it is not a personal reply owed",
-            requires_reply=False,
-            tags=["bulk", "no-reply"],
-        )
 
     # Rung 2 — PRECEDENT: a real human wrote; a person is owed a human reply.
     if _looks_human(sender):

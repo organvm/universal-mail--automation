@@ -13,26 +13,24 @@ surface, not the canonical product backend.
 
 ## Verified locally
 
-These checks passed on 2026-06-27:
+Smoke checks are covered in this repository by `ci.yml` + `deploy.yml`:
 
-```bash
-python3 -m pytest -q
-python3 -m ruff check --select E9,F63,F7,F82 .
-python3 -m build --no-isolation --skip-dependency-check
-python3 -m twine check dist/*
-npm run lint --prefix web -- --max-warnings=0
-npm run build --prefix web
-node --test cloudflare/worker.test.mjs
-```
+- Python 3.11/3.12 test matrix
+- Python package build + `twine check`
+- `umail --version` from built wheel
+- Web lint/build and Cloudflare Worker tests
 
-FastAPI was also smoke-tested in process with `TestClient` for `/health`,
-`/v1/billing/plans`, `/v1/senders/check`, `/app/`, and
-`/.well-known/agent.json`.
+A production host or container host is required to fully prove the socket binding
+path (`/health`, `/v1/billing/plans`, `/v1/senders/check`, `/app`).
 
-Socket binding and Docker smoke tests were not runnable in this sandbox:
-`uvicorn` startup reached application startup, then local port binding returned
-`operation not permitted`; `docker` is not installed here. The CI deploy workflow
-builds and smoke-tests the same Dockerfile.
+## Remaining before production hardening
+
+- Set host/runtime secrets in your deployment target: provider credentials and
+  the billing/receipt envs (`STRIPE_SECRET_KEY`, `STRIPE_PRICE_*`,
+  `STRIPE_WEBHOOK_SECRET`, `RECEIPT_SIGNING_KEY`).
+- Set `MCP_ALLOWED_HOSTS` to the deployed hostname before enabling `/mcp`.
+- For Cloudflare share deployments, refresh `web` assets before deploy and
+  treat the worker as a review/demo surface, not the canonical backend.
 
 ## Deploy commands
 
@@ -59,20 +57,10 @@ CLOUDFLARE_API_TOKEN=... npx wrangler@4 deploy
 
 ## What remains
 
-1. Remote PR/CI gate: from a networked shell, run `gh pr list`, make open PRs
-   green, merge the ready ones, and confirm GitHub Actions are green on `main`.
-   This sandbox cannot reach `api.github.com`.
-2. Production host gate: choose the live host and set its base env. A
-   no-credential demo only needs the app deployed; set `MCP_ALLOWED_HOSTS` to
-   the public hostname if `/mcp` is exposed.
-3. Live mailbox gate: set provider credentials for the mailbox providers to use:
-   `GMAIL_OAUTH_OP_REF`/`GMAIL_TOKEN_OP_REF`, or `IMAP_HOST`/`IMAP_USER`/`IMAP_PASS`,
-   or `OUTLOOK_CLIENT_ID`/`OUTLOOK_TOKEN_CACHE`.
-4. Money gate: set `STRIPE_SECRET_KEY`, `STRIPE_PRICE_PRO`,
-   `STRIPE_PRICE_BUSINESS`, and `STRIPE_WEBHOOK_SECRET`; configure Stripe to send
-   `checkout.session.completed`, `customer.subscription.*`, `invoice.paid`, and
-   `invoice.payment_failed` to `https://<host>/v1/billing/webhook`.
-5. Cloudflare demo gate: set `CLOUDFLARE_API_TOKEN` in CI or the local deploy
-   environment before claiming `https://uma.4444j99.dev` is current.
+1. **PR gate (external):** confirm all open PRs are merged/closed and the latest `main` CI run is green in GitHub.
+2. **Production host gate (external):** pick the live hostname, set `MCP_ALLOWED_HOSTS` if `/mcp` is public, and confirm traffic to `/health`, `/app`, and `/v1` in production.
+3. **Mailbox credentials gate:** set one provider auth chain on the host (`GMAIL_*`, `IMAP_*`, or `OUTLOOK_*`).
+4. **Billing gate:** set `STRIPE_SECRET_KEY`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BUSINESS`, and `STRIPE_WEBHOOK_SECRET`; wire `checkout.session.completed`, `customer.subscription.*`, `invoice.paid`, and `invoice.payment_failed` to `/v1/billing/webhook`.
+5. **Cloudflare demo gate:** set `CLOUDFLARE_API_TOKEN` before rotating or claiming `https://uma.4444j99.dev` as current.
 
-No local code blockers remain.
+No remaining known code-level blockers in this workspace snapshot.

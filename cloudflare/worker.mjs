@@ -153,6 +153,12 @@ const COMMON_HEADERS = {
   "access-control-allow-methods": "GET,POST,OPTIONS",
   "access-control-allow-headers": "content-type",
 };
+const MAX_JSON_BYTES = 32768;
+const MAX_HEADER_VALUE_LENGTH = 4096;
+const MAX_PROVIDER_LENGTH = 64;
+const MAX_TRIAGE_LIMIT = 50;
+const CONTROL_RE = /[\x00-\x1f\x7f]/;
+const PROVIDER_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 
 function json(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -185,6 +191,43 @@ function protectedCategorization(label) {
     is_vip: false,
     vip_note: "",
   };
+}
+
+class InputError extends Error {}
+
+function boundedText(value, field, maxLength, { allowEmpty = true } = {}) {
+  if (typeof value !== "string") throw new InputError(`${field} must be a string`);
+  const text = value.trim();
+  if (!allowEmpty && text.length === 0) throw new InputError(`${field} is required`);
+  if (text.length > maxLength) throw new InputError(`${field} exceeds ${maxLength} characters`);
+  if (CONTROL_RE.test(text)) throw new InputError(`${field} contains control characters`);
+  return text;
+}
+
+function validateSender(value) {
+  return boundedText(value, "sender", MAX_HEADER_VALUE_LENGTH, { allowEmpty: false });
+}
+
+function validateProvider(value, fallback = "demo") {
+  const provider = boundedText(
+    value == null || value === "" ? fallback : String(value),
+    "provider",
+    MAX_PROVIDER_LENGTH,
+    { allowEmpty: false },
+  ).toLowerCase();
+  if (!PROVIDER_RE.test(provider)) {
+    throw new InputError("provider has invalid characters");
+  }
+  return provider;
+}
+
+function validateLimit(value) {
+  if (value == null || value === "") return MAX_TRIAGE_LIMIT;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_TRIAGE_LIMIT) {
+    throw new InputError(`limit must be between 1 and ${MAX_TRIAGE_LIMIT}`);
+  }
+  return limit;
 }
 
 function senderCheck(sender) {
@@ -248,11 +291,34 @@ function senderCheck(sender) {
   };
 }
 
-function triagePreview(provider, limit) {
+function isoNow() {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function buildPacket({ provider, query, limit, result, runId }) {
+  const resultCopy = JSON.parse(JSON.stringify(result));
+  return {
+    schema: "uma.intake.packet.v1",
+    product: "uma",
+    surface: "cloudflare-worker",
+    operation: "triage",
+    status: "ok",
+    timestamp: isoNow(),
+    run_id: runId,
+    request: { provider, query, limit, dry_run: true },
+    payload: {
+      surface: "cloudflare-worker",
+      result: resultCopy,
+      request: { provider, query, limit, dry_run: true },
+    },
+  };
+}
+
+function triagePreview(provider, limit, query) {
   const capped = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 50) : 50;
   const archived = capped > 0 ? 1 : 0;
   const protectedHeld = capped > 1 ? 2 : Math.max(0, capped - archived);
-  return {
+  const result = {
     dry_run: true,
     provider,
     receipt: `Triage receipt: ${Math.max(capped, 3)} message(s) — ${protectedHeld} protected held in inbox, ${archived} would leave inbox, 0 labeled-inbox, 0 kept.`,
@@ -274,6 +340,14 @@ function triagePreview(provider, limit) {
     },
     run_id: "demo_preview",
   };
+  result.packet = buildPacket({
+    provider,
+    query: query || "has:nouserlabels",
+    limit: capped,
+    result,
+    runId: "demo_preview",
+  });
+  return result;
 }
 
 function billingPlans() {
@@ -403,11 +477,25 @@ function docsPage(base) {
 }
 
 async function readJson(request) {
-  try {
-    return await request.json();
-  } catch {
-    return {};
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (contentLength > MAX_JSON_BYTES) {
+    throw new InputError(`JSON body exceeds ${MAX_JSON_BYTES} bytes`);
   }
+  const textBody = await request.text();
+  if (textBody.length > MAX_JSON_BYTES) {
+    throw new InputError(`JSON body exceeds ${MAX_JSON_BYTES} bytes`);
+  }
+  if (!textBody.trim()) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(textBody);
+  } catch {
+    throw new InputError("invalid JSON body");
+  }
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new InputError("JSON body must be an object");
+  }
+  return parsed;
 }
 
 async function serveApp(request, env) {
@@ -437,18 +525,41 @@ export default {
     }
 
     if (url.pathname === "/v1/senders/check" && request.method === "POST") {
-      const body = await readJson(request);
-      return json(senderCheck(body.sender));
+      try {
+        const body = await readJson(request);
+        return json(senderCheck(validateSender(body.sender)));
+      } catch (err) {
+        if (err instanceof InputError) return json({ detail: err.message }, { status: 400 });
+        throw err;
+      }
     }
 
     if (url.pathname === "/v1/triage/preview" && request.method === "POST") {
-      const body = await readJson(request);
-      return json(triagePreview(body.provider || "demo", Number(body.limit)));
+      try {
+        const body = await readJson(request);
+        return json(triagePreview(
+          validateProvider(body.provider),
+          validateLimit(body.limit),
+          body.query || "has:nouserlabels"
+        ));
+      } catch (err) {
+        if (err instanceof InputError) return json({ detail: err.message }, { status: 400 });
+        throw err;
+      }
     }
 
     if (url.pathname === "/v1/triage" && request.method === "POST") {
-      const body = await readJson(request);
-      return json(triagePreview(body.provider || "demo", Number(body.limit)));
+      try {
+        const body = await readJson(request);
+        return json(triagePreview(
+          validateProvider(body.provider),
+          validateLimit(body.limit),
+          body.query || "has:nouserlabels"
+        ));
+      } catch (err) {
+        if (err instanceof InputError) return json({ detail: err.message }, { status: 400 });
+        throw err;
+      }
     }
 
     if (url.pathname === "/v1/billing/plans" && request.method === "GET") {
@@ -508,6 +619,21 @@ export default {
       }
       return json({
         run_id: runId,
+        packet: {
+          schema: "uma.intake.packet.v1",
+          product: "uma",
+          surface: "cloudflare-worker",
+          operation: "triage_receipt_lookup",
+          status: DEMO_RUN_IDS.has(runId) ? "ok" : "error",
+          timestamp: isoNow(),
+          run_id: runId,
+          request: { run_id: runId },
+          payload: {
+            surface: "cloudflare-worker",
+            request: { run_id: runId },
+            result: { run_id: runId, available: DEMO_RUN_IDS.has(runId) },
+          },
+        },
         demo: true,
         signed: false,
         signature: null,
@@ -555,4 +681,4 @@ export default {
 
 // Named exports for unit testing the protected-sender gate. The Cloudflare
 // Worker runtime only consumes the default export above; these are inert there.
-export { senderCheck, senderDomains, isProtectedDomain, domainMatches, govProtected };
+export { senderCheck, senderDomains, isProtectedDomain, domainMatches, govProtected, readJson };

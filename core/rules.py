@@ -6,29 +6,24 @@ and categorization functions used across all email providers.
 """
 
 import re
-from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.header import decode_header, make_header
 from email.utils import getaddresses, parseaddr
-from typing import TypedDict
+from typing import Dict, List, Optional, Tuple, Iterator, TypedDict, Set
 
-
-class LabelRuleOptions(TypedDict, total=False):
-    domains: list[str]
+class LabelRuleDef(TypedDict, total=False):
+    patterns: List[str]
+    domains: List[str]
+    priority: int
     tier: int
     time_sensitive: bool
     requires_reply: bool
-    not_if_seen: list[str]
-    not_if_sender: list[str]
+    not_if_seen: List[str]
+    not_if_sender: List[str]
     time_limit_days: int
-    match: re.Pattern[str] | None
-    neg_match: re.Pattern[str] | None
-
-
-class LabelRuleDef(LabelRuleOptions):
-    patterns: list[str]
-    priority: int
+    match: Optional[re.Pattern[str]]
+    neg_match: Optional[re.Pattern[str]]
 
 
 # ============================================================================
@@ -41,12 +36,12 @@ class PriorityTier:
     number: int
     name: str
     color: str
-    folder: str | None
+    folder: Optional[str]
     keep_in_inbox: bool
     star: bool
 
 
-PRIORITY_TIERS: dict[int, PriorityTier] = {
+PRIORITY_TIERS: Dict[int, PriorityTier] = {
     1: PriorityTier(
         number=1,
         name="Critical",
@@ -85,7 +80,7 @@ PRIORITY_TIERS: dict[int, PriorityTier] = {
 # LABEL TAXONOMY - Comprehensive categorization rules
 # ============================================================================
 
-LABEL_RULES: dict[str, LabelRuleDef] = {
+LABEL_RULES: Dict[str, LabelRuleDef] = {
     # Development & Code
     "Dev/GitHub": {
         "patterns": [
@@ -534,23 +529,18 @@ LABEL_RULES: dict[str, LabelRuleDef] = {
 }
 
 # Labels that should trigger starring (high priority)
-PRIORITY_LABELS: set[str] = {
+PRIORITY_LABELS = {
     "Finance/Banking",
     "Tech/Security",
 }
 
 # Labels that should remain in inbox (not archived)
-KEEP_IN_INBOX: set[str] = {
+KEEP_IN_INBOX = {
     "Finance/Banking",
     "Tech/Security",
     "Personal",
     "Awaiting Reply",
 }
-
-
-def _get_rule(label: str, fallback: LabelRuleOptions) -> LabelRuleOptions:
-    """Return a typed rule for label with explicit fallback contract."""
-    return LABEL_RULES.get(label, fallback)
 
 
 # ============================================================================
@@ -588,7 +578,7 @@ def _get_rule(label: str, fallback: LabelRuleOptions) -> LabelRuleOptions:
 # SYNTHETIC examples; each user supplies their own specifics via a gitignored local
 # config (PROTECTED_SENDERS_FILE or ./config/protected_senders.local.txt), which is
 # MERGED in at import. The gate LOGIC is identical regardless of the data source.
-EXAMPLE_PROTECTED_SENDERS: list[str] = [
+EXAMPLE_PROTECTED_SENDERS: List[str] = [
     # --- Generic, non-PII services (safe, sensible defaults for everyone) ---
     "docusign.net",                                  # e-signature (legal docs)
     "irs.gov", "ssa.gov", "studentaid.gov", "login.gov",  # US government
@@ -605,14 +595,14 @@ EXAMPLE_PROTECTED_SENDERS: list[str] = [
 ]
 
 # iCloud relay carriers whose local-part encodes the real sender's address.
-RELAY_DOMAINS: set[str] = {"icloud.com", "privaterelay.appleid.com"}
+RELAY_DOMAINS = {"icloud.com", "privaterelay.appleid.com"}
 # Gmail mailboxes that canonicalize away dots and +tags in the local part.
-GMAIL_DOMAINS: set[str] = {"gmail.com", "googlemail.com"}
+GMAIL_DOMAINS = {"gmail.com", "googlemail.com"}
 # Synthetic self placeholder; the real self mailbox(es) load from the local config.
-EXAMPLE_SELF_LOCALPARTS: set[str] = {"youremail"}
+EXAMPLE_SELF_LOCALPARTS = {"youremail"}
 
 
-def _load_local_protected() -> tuple[list[str], set[str]]:
+def _load_local_protected() -> Tuple[List[str], Set[str]]:
     """Load the user's REAL protected domains + self mailboxes from a gitignored
     local config so PII never enters this PUBLIC repo.
 
@@ -626,8 +616,8 @@ def _load_local_protected() -> tuple[list[str], set[str]]:
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "config", "protected_senders.local.txt",
     )
-    domains: list[str] = []
-    selfs: set[str] = set()
+    domains: List[str] = []
+    selfs: Set[str] = set()
     try:
         # errors="replace": a non-UTF-8 byte must NOT raise UnicodeDecodeError and
         # crash the import (disabling the whole gate). Bad bytes degrade to U+FFFD
@@ -656,9 +646,9 @@ def _load_local_protected() -> tuple[list[str], set[str]]:
 _local_domains, _local_selfs = _load_local_protected()
 # Real entries (from the gitignored local file) are MERGED with the shipped
 # examples; the example domains never receive real mail, so the merge is harmless.
-PROTECTED_SENDERS: list[str] = list(dict.fromkeys(EXAMPLE_PROTECTED_SENDERS + _local_domains))
+PROTECTED_SENDERS: List[str] = list(dict.fromkeys(EXAMPLE_PROTECTED_SENDERS + _local_domains))
 # Self mailbox(es), dot/plus-canonicalized (dots stripped, lowercased).
-SELF_LOCALPARTS: set[str] = EXAMPLE_SELF_LOCALPARTS | _local_selfs
+SELF_LOCALPARTS = EXAMPLE_SELF_LOCALPARTS | _local_selfs
 
 
 def _decode_mime(raw: str) -> str:
@@ -677,7 +667,7 @@ def _idna_decode(domain: str) -> str:
     """Punycode (xn--) -> Unicode per label, so an IDN/homoglyph domain is
     compared on its U-label, not its opaque A-label. Per-label and crash-safe:
     an undecodable label is left as-is rather than failing the whole gate."""
-    out: list[str] = []
+    out = []
     for lbl in domain.split("."):
         if lbl.startswith("xn--"):
             try:
@@ -713,7 +703,7 @@ def _is_protected_domain(domain: str) -> bool:
     return any(_domain_matches(domain, e) for e in PROTECTED_SENDERS)
 
 
-def _relay_domain_candidates(local: str) -> set[str]:
+def _relay_domain_candidates(local: str) -> Set[str]:
     """Recover candidate real domains from an iCloud relay local-part.
 
     iCloud Hide My Email / forwarding rewrites the real sender into the local
@@ -727,7 +717,7 @@ def _relay_domain_candidates(local: str) -> set[str]:
     parts = base.split("_")
     # full form + each prefix formed by dropping 1..N trailing segments
     variants = {"_".join(parts[:k]) for k in range(1, len(parts) + 1)}
-    cands: set[str] = set()
+    cands = set()
     for v in variants:
         dom = v.replace("_", ".").strip(".")
         if "." in dom:
@@ -735,7 +725,7 @@ def _relay_domain_candidates(local: str) -> set[str]:
     return cands
 
 
-def _best_relay_domain(cands: set[str]) -> str:
+def _best_relay_domain(cands: Set[str]) -> str:
     """Pick the most-likely REAL domain from relay candidates for categorization.
     Prefer a candidate whose terminal label looks like a TLD (all-alpha) and the
     fewest labels (the token-appended variant carries a junk last label)."""
@@ -744,7 +734,7 @@ def _best_relay_domain(cands: set[str]) -> str:
     return min(real, key=lambda c: c.count(".")) if real else ""
 
 
-def _resolve_addr(addr: str | None) -> tuple[str, str]:
+def _resolve_addr(addr: Optional[str]) -> Tuple[str, str]:
     """Resolve a SINGLE addr-spec to (email, real_domain).
 
     rpartition on the LAST '@' (so a quoted local part carrying a protected token
@@ -777,7 +767,7 @@ def _resolve_addr(addr: str | None) -> tuple[str, str]:
     return (addr, domain)
 
 
-def normalize_sender(raw_from: str | None) -> tuple[str, str, str]:
+def normalize_sender(raw_from: Optional[str]) -> Tuple[str, str, str]:
     """Parse a raw From header into (display, email, domain) for the FIRST/primary
     address (used by categorization). The protection gate uses every address —
     see is_protected_sender / _iter_sender_domains.
@@ -802,7 +792,7 @@ def normalize_sender(raw_from: str | None) -> tuple[str, str, str]:
     return (display, email_, domain)
 
 
-def _iter_sender_domains(raw_from: str) -> Iterator[tuple[str, str]]:
+def _iter_sender_domains(raw_from: str) -> Iterator[Tuple[str, str]]:
     """Yield (email, domain) for EVERY address in a (possibly multi-address) From,
     each relay/MIME/IDNA-decoded. The gate matches the UNION so a protected sender
     listed alongside others (e.g. 'Lawyer <a@firm>, Assistant <b@bulk>') can't
@@ -824,7 +814,7 @@ def _self_match(addr: str, domain: str) -> bool:
     return local in SELF_LOCALPARTS
 
 
-def is_protected_sender(sender: str | None) -> bool:
+def is_protected_sender(sender: Optional[str]) -> bool:
     """Hard gate: True if this sender must NEVER be archived / moved out of inbox.
 
     FAIL CLOSED: empty/None/unparseable sender returns True (protect on
@@ -845,18 +835,18 @@ def is_protected_sender(sender: str | None) -> bool:
     return not saw_domain
 
 
-def is_archivable(sender: str | None) -> bool:
+def is_archivable(sender: Optional[str]) -> bool:
     """Convenience inverse of is_protected_sender() for filtering action sets."""
     return not is_protected_sender(sender)
 
 
-def partition_protected(senders_by_id: Mapping[str, str | None]) -> tuple[list[str], list[str]]:
+def partition_protected(senders_by_id: Dict[str, str]) -> Tuple[List[str], List[str]]:
     """Split {message_id: from_header} into (archivable_ids, protected_ids).
 
     The protected count is the trust receipt every run should report.
     """
-    archivable: list[str] = []
-    protected: list[str] = []
+    archivable: List[str] = []
+    protected: List[str] = []
     for msg_id, sender in senders_by_id.items():
         (protected if is_protected_sender(sender) else archivable).append(msg_id)
     return archivable, protected
@@ -872,13 +862,13 @@ class VIPSender:
     pattern: str
     tier: int
     star: bool
-    label_override: str | None = None  # Override the matched label
+    label_override: Optional[str] = None  # Override the matched label
     note: str = ""  # Human-readable note
 
 
 # VIP senders always get priority treatment regardless of category
 # Patterns are matched against the sender (From header)
-VIP_SENDERS: dict[str, VIPSender] = {
+VIP_SENDERS: Dict[str, VIPSender] = {
     # Example VIP patterns (customize for your use case)
     # "ceo@company.com": VIPSender(
     #     pattern=r"ceo@company\.com",
@@ -910,7 +900,7 @@ class CategorizationResult:
     vip_note: str = ""
 
 
-def check_vip_sender(sender: str) -> tuple[VIPSender, str] | None:
+def check_vip_sender(sender: str) -> Optional[Tuple[VIPSender, str]]:
     """
     Check if a sender matches a VIP pattern.
 
@@ -932,7 +922,7 @@ def is_vip_sender(sender: str) -> bool:
     return check_vip_sender(sender) is not None
 
 
-def get_vip_senders() -> dict[str, VIPSender]:
+def get_vip_senders() -> Dict[str, VIPSender]:
     """Get the current VIP senders dict."""
     return VIP_SENDERS.copy()
 
@@ -942,7 +932,7 @@ def add_vip_sender(
     pattern: str,
     tier: int = 1,
     star: bool = True,
-    label_override: str | None = None,
+    label_override: Optional[str] = None,
     note: str = "",
 ) -> None:
     """
@@ -965,7 +955,7 @@ def add_vip_sender(
     )
 
 
-def categorize_message(headers: Sequence[Mapping[str, str]]) -> str:
+def categorize_message(headers: List[Dict[str, str]]) -> str:
     """
     Categorize an email based on headers.
 
@@ -1018,20 +1008,20 @@ def categorize_with_tier(sender: str, subject: str) -> CategorizationResult:
     # Check VIP senders first - they get priority treatment
     vip_match = check_vip_sender(sender)
     if vip_match:
-        vip, _vip_key = vip_match
+        vip, vip_key = vip_match
         tier = vip.tier
         tier_config = PRIORITY_TIERS.get(tier, PRIORITY_TIERS[1])
 
         # Use label override if specified, otherwise do normal categorization
         if vip.label_override:
             label = vip.label_override
-            rule = _get_rule(label=label, fallback={"time_sensitive": True})
+            rule = LABEL_RULES.get(label, {"time_sensitive": True})
             time_sensitive = rule.get("time_sensitive", True)
         else:
             # Still categorize normally but use VIP tier
             combined_text = f"{sender} {subject}".lower()
             label = _find_best_label(combined_text)
-            rule = _get_rule(label=label, fallback=LABEL_RULES["Misc/Other"])
+            rule = LABEL_RULES.get(label, {})
             time_sensitive = rule.get("time_sensitive", True)  # VIP is time-sensitive
 
         return CategorizationResult(
@@ -1047,7 +1037,7 @@ def categorize_with_tier(sender: str, subject: str) -> CategorizationResult:
     combined_text = f"{sender} {subject}".lower()
     label = _find_best_label(combined_text)
 
-    rule = _get_rule(label=label, fallback=LABEL_RULES["Misc/Other"])
+    rule = LABEL_RULES[label]
     tier = rule.get("tier", 4)
     time_sensitive = rule.get("time_sensitive", False)
     tier_config = PRIORITY_TIERS.get(tier, PRIORITY_TIERS[4])
@@ -1070,13 +1060,13 @@ def _find_best_label(combined_text: str) -> str:
     sharing its priority with an earlier-inserted tier-4 rule silently lost —
     e.g. an ssa.gov notice containing the word "newsletter" was filed as
     Marketing/Reference instead of Government/Critical (review U064)."""
-    best_match: str | None = None
-    best_key: tuple[int, int] = (9999, 9)  # (priority, tier): lower wins on both axes
+    best_match = None
+    best_key = (9999, 9)  # (priority, tier): lower wins on both axes
 
     for label_name, rule_config in LABEL_RULES.items():
-        for pattern in rule_config["patterns"]:
+        for pattern in rule_config.get("patterns", []):
             if re.search(pattern, combined_text, re.IGNORECASE):
-                key = (rule_config["priority"], rule_config.get("tier", 4))
+                key = (rule_config.get("priority", 999), rule_config.get("tier", 4))
                 if key < best_key:
                     best_match = label_name
                     best_key = key
@@ -1087,7 +1077,7 @@ def _find_best_label(combined_text: str) -> str:
 
 def get_tier_for_label(label: str) -> int:
     """Get the priority tier for a label."""
-    rule = _get_rule(label=label, fallback=LABEL_RULES["Misc/Other"])
+    rule = LABEL_RULES.get(label, {})
     return rule.get("tier", 4)
 
 
@@ -1118,7 +1108,7 @@ def should_keep_in_inbox(label: str) -> bool:
 
 def is_time_sensitive(label: str) -> bool:
     """Check if a label is time-sensitive (should escalate with age)."""
-    rule = _get_rule(label=label, fallback=LABEL_RULES["Misc/Other"])
+    rule = LABEL_RULES.get(label, {})
     return rule.get("time_sensitive", False)
 
 
@@ -1207,7 +1197,7 @@ def escalate_by_age(
     )
 
 
-def calculate_email_age_hours(email_date: datetime | None) -> float:
+def calculate_email_age_hours(email_date: Optional[datetime]) -> float:
     """
     Calculate the age of an email in hours.
 

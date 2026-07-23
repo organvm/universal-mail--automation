@@ -396,22 +396,22 @@ pip install -r requirements-mcp.txt      # MCP server (optional, Python 3.10+)
 ### First Run
 
 ```bash
-# Load secrets (1Password integration)
+#Load secrets (1Password integration)
 source ~/.config/op/mail_automation.env.op.sh
 
-# Dry run to preview changes (no modifications made)
+#Dry run to preview changes (no modifications made)
 python3 cli.py label --provider gmail --dry-run
 
-# Apply labels to unlabeled Gmail messages
+#Apply labels to unlabeled Gmail messages
 python3 cli.py label --provider gmail --query "has:nouserlabels"
 
-# Process Outlook inbox
+#Process Outlook inbox
 python3 cli.py label --provider outlook
 
-# Process iCloud via IMAP
+#Process iCloud via IMAP
 python3 cli.py label --provider imap --host imap.mail.me.com
 
-# Run all providers sequentially
+#Run all providers sequentially
 ./run_automation.sh
 ```
 
@@ -424,22 +424,22 @@ The CLI (`cli.py`) is built on `argparse` and provides eight subcommands — `la
 ### Labeling Commands
 
 ```bash
-# Label unlabeled Gmail emails
+#Label unlabeled Gmail emails
 python3 cli.py label --provider gmail
 
-# Label with a custom query
+#Label with a custom query
 python3 cli.py label --provider gmail --query "from:important@example.com"
 
-# With Eisenhower tier routing (Outlook categories + Action folders)
+#With Eisenhower tier routing (Outlook categories + Action folders)
 python3 cli.py label --provider outlook --tier-routing
 
-# VIP senders only (skip normal categorization)
+#VIP senders only (skip normal categorization)
 python3 cli.py label --provider gmail --vip-only
 
-# Re-label emails currently tagged Misc/Other
+#Re-label emails currently tagged Misc/Other
 python3 cli.py label --provider gmail --query "label:Misc/Other" --remove-label "Misc/Other"
 
-# Dry run — preview all changes without applying them
+#Dry run — preview all changes without applying them
 python3 cli.py label --provider outlook --dry-run
 ```
 
@@ -461,19 +461,19 @@ python3 cli.py label --provider outlook --dry-run
 ### Reporting Commands
 
 ```bash
-# Summary by priority tier
+#Summary by priority tier
 python3 cli.py summary --provider gmail
 
-# Pending items needing action (Tier 1 and 2)
+#Pending items needing action (Tier 1 and 2)
 python3 cli.py pending --provider outlook
 
-# VIP sender activity report
+#VIP sender activity report
 python3 cli.py vip --provider gmail
 
-# Re-triage stale emails via time-based escalation (dry run)
+#Re-triage stale emails via time-based escalation (dry run)
 python3 cli.py escalate --provider outlook --dry-run
 
-# Re-triage and apply escalations
+#Re-triage and apply escalations
 python3 cli.py escalate --provider gmail
 ```
 
@@ -491,13 +491,13 @@ Flags and defaults for the reporting commands:
 ### Operator Summary Command
 
 ```bash
-# Emit the redacted operator dashboard payload from a local report
+#Emit the redacted operator dashboard payload from a local report
 python3 cli.py ops-summary --report ~/System/Reports/mail-triage/latest.json --pretty
 
-# Persist a redacted latest summary and bounded history
+#Persist a redacted latest summary and bounded history
 python3 cli.py ops-refresh --report ~/System/Reports/mail-triage/latest.json --pretty
 
-# Optionally run the local read-only macOS Mail report producer first
+#Optionally run the local read-only macOS Mail report producer first
 python3 cli.py ops-refresh \
   --run-mail-triage \
   --since 2026-05-01 \
@@ -505,7 +505,7 @@ python3 cli.py ops-refresh \
   --report-dir ~/System/Reports/mail-triage \
   --output-dir ~/.local/state/universal-mail-automation/ops
 
-# Normalize local historical mail into the private export consumed by mail-intel
+#Normalize local historical mail into the private export consumed by mail-intel
 python3 cli.py mail-history-export \
   --source ~/Library/Mail \
   --output ~/System/Reports/mail-history/latest.json \
@@ -513,68 +513,68 @@ python3 cli.py mail-history-export \
   --until 2026-06-16 \
   --pretty
 
-# Mine a read-only historical export and reconcile it against the current ops report
+#Mine a read-only historical export and reconcile it against the current ops report
 python3 cli.py mail-intel \
   --history ~/System/Reports/mail-history/latest.json \
   --ops-report ~/System/Reports/mail-triage/latest.json \
   --output ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Group the redacted intelligence into approval-aware action clusters
+#Group the redacted intelligence into approval-aware action clusters
 python3 cli.py mail-action-plan \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Map action clusters to official surfaces, blockers, and proof requirements
+#Map action clusters to official surfaces, blockers, and proof requirements
 python3 cli.py mail-resolver-plan \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Rank controlled provider hints into the next provider/API/CLI resolver frontier
+#Rank controlled provider hints into the next provider/API/CLI resolver frontier
 python3 cli.py mail-provider-surface-plan \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Show official-surface resolver proof state
+#Show official-surface resolver proof state
 python3 cli.py mail-resolver-ledger \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Read GitHub official surfaces without mutating GitHub or mail
+#Read GitHub official surfaces without mutating GitHub or mail
 python3 cli.py mail-github-resolver \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Record GitHub provider-read or blocker proof into the resolver ledger
+#Record GitHub provider-read or blocker proof into the resolver ledger
 python3 cli.py mail-github-resolver-receipts \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --ledger ~/.local/state/universal-mail-automation/mail-resolver-ledger.jsonl \
   --pretty
 
-# Reconcile mail/LinkedIn follow-up state from approval and delivery receipts
+#Reconcile mail/LinkedIn follow-up state from approval and delivery receipts
 python3 cli.py mail-followup-resolver \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Record mail/LinkedIn follow-up proof when approval or delivery receipts exist
+#Record mail/LinkedIn follow-up proof when approval or delivery receipts exist
 python3 cli.py mail-followup-resolver-receipts \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --ledger ~/.local/state/universal-mail-automation/mail-resolver-ledger.jsonl \
   --pretty
 
-# Inspect provider/security/billing/subscription/legal external-surface work
+#Inspect provider/security/billing/subscription/legal external-surface work
 python3 cli.py mail-external-resolver \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Record local blocker attestations for visible external-surface actions
+#Record local blocker attestations for visible external-surface actions
 python3 cli.py mail-external-resolver-receipts \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --ledger ~/.local/state/universal-mail-automation/mail-resolver-ledger.jsonl \
   --attest-blockers \
   --pretty
 
-# Record redacted official-surface resolver proof
+#Record redacted official-surface resolver proof
 python3 cli.py mail-resolver-receipt \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --action-id action_... \
@@ -584,12 +584,12 @@ python3 cli.py mail-resolver-receipt \
   --provider github \
   --pretty
 
-# Show local action status and proof receipts
+#Show local action status and proof receipts
 python3 cli.py mail-action-ledger \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --pretty
 
-# Record a redacted local receipt for an action id
+#Record a redacted local receipt for an action id
 python3 cli.py mail-action-receipt \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --action-id action_... \
@@ -597,14 +597,14 @@ python3 cli.py mail-action-receipt \
   --reason-code awaiting_reply \
   --pretty
 
-# Open one private source message for fact checking before drafting/action
+#Open one private source message for fact checking before drafting/action
 python3 cli.py mail-evidence-review \
   --history ~/System/Reports/mail-history/latest.json \
   --evidence-id ev_... \
   --ack-private \
   --pretty
 
-# Build private draft candidates for approval before any send
+#Build private draft candidates for approval before any send
 python3 cli.py mail-draft-package \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --history ~/System/Reports/mail-history/latest.json \
@@ -612,7 +612,7 @@ python3 cli.py mail-draft-package \
   --ack-private \
   --pretty
 
-# Record redacted local approval for a draft candidate
+#Record redacted local approval for a draft candidate
 python3 cli.py mail-draft-approval \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --history ~/System/Reports/mail-history/latest.json \
@@ -623,7 +623,7 @@ python3 cli.py mail-draft-approval \
   --ack-private \
   --pretty
 
-# Record redacted local delivery intent/status after approval
+#Record redacted local delivery intent/status after approval
 python3 cli.py mail-delivery-receipt \
   --intelligence ~/System/Reports/mail-history/latest-intelligence.json \
   --history ~/System/Reports/mail-history/latest.json \
@@ -634,7 +634,7 @@ python3 cli.py mail-delivery-receipt \
   --ack-private \
   --pretty
 
-# Or configure once and serve the private operator dashboard
+#Or configure once and serve the private operator dashboard
 export UMA_OPS_REPORT_PATH=~/System/Reports/mail-triage/latest.json
 export UMA_OPS_HISTORY_DIR=~/.local/state/universal-mail-automation/ops
 export UMA_HISTORICAL_MAIL_PATH=~/System/Reports/mail-history/latest.json
@@ -645,27 +645,27 @@ export UMA_MAIL_DRAFT_APPROVAL_PATH=~/.local/state/universal-mail-automation/mai
 export UMA_MAIL_DELIVERY_LEDGER_PATH=~/.local/state/universal-mail-automation/mail-delivery-ledger.jsonl
 export UMA_OPS_TOKEN="choose-a-local-token"
 uvicorn api.app:app --reload
-# open /ops and use the configured bearer token
+#open /ops and use the configured bearer token
 ```
 
 ### Triage Commands
 
 ```bash
-# Research, prioritize, and rank the mailbox (top 20 items)
+#Research, prioritize, and rank the mailbox (top 20 items)
 python3 cli.py triage --provider gmail --top 20
 
-# Triage with voice-matched reply drafts for items needing a response
+#Triage with voice-matched reply drafts for items needing a response
 python3 cli.py triage --provider gmail --top 20 --draft --name "Anthony"
 
-# On-demand recent intake reports for this local machine
+#On-demand recent intake reports for this local machine
 scripts/intake_now.sh
 
-# Use a saved voice profile / sent-mail corpus for drafting
+#Use a saved voice profile / sent-mail corpus for drafting
 python3 cli.py triage --provider gmail --draft \
     --voice-file ~/.config/mail_automation/voice.json \
     --samples-file ~/.config/mail_automation/sent_samples.txt
 
-# Machine-readable output for downstream tooling
+#Machine-readable output for downstream tooling
 python3 cli.py triage --provider outlook --format json --limit 100
 ```
 
@@ -687,10 +687,10 @@ python3 cli.py triage --provider outlook --format json --limit 100
 ### Health and Diagnostics
 
 ```bash
-# Provider health check (verifies connection and credentials)
+#Provider health check (verifies connection and credentials)
 python3 cli.py health --provider gmail
 
-# Per-label message counts (live counts on Gmail; N/A on other providers)
+#Per-label message counts (live counts on Gmail; N/A on other providers)
 python3 cli.py report --provider outlook
 ```
 
@@ -716,7 +716,7 @@ The config file is located by checking, in order:
 ### YAML Configuration File
 
 ```yaml
-# ~/.config/mail_automation/config.yaml
+#~/.config/mail_automation/config.yaml
 
 default_provider: gmail
 log_level: INFO
@@ -777,16 +777,19 @@ mailapp:
 Secrets are loaded from 1Password via environment variables, typically sourced from a shell script:
 
 ```bash
-# ~/.config/op/mail_automation.env.op.sh
+#~/.config/op/mail_automation.env.op.sh
 export GMAIL_OAUTH_OP_REF="op://Vault/Gmail OAuth/client_json"
 export GMAIL_TOKEN_OP_REF="op://Vault/Gmail OAuth/token_json"
 export ICLOUD_IMAP_HOST="imap.mail.me.com"
 export ICLOUD_IMAP_USER="user@icloud.com"
-export ICLOUD_IMAP_PASS="$(op read 'op://Vault/iCloud App Password/password')"
+export ICLOUD_IMAP_PASS="op://Vault/iCloud App Password/password"
 export OUTLOOK_CLIENT_ID="your-azure-app-client-id"
 ```
 
-The IMAP provider also supports direct 1Password CLI lookup via `OP_ACCOUNT`, `OP_ITEM`, and `OP_FIELD` environment variables, calling `op item get` at connection time.
+Values written as `op://...` references are resolved at load time with the
+1Password CLI (`op read`), so no plaintext secret is committed. The IMAP provider
+also supports direct 1Password CLI lookup via `OP_ACCOUNT`, `OP_ITEM`, and
+`OP_FIELD` environment variables, calling `op item get` at connection time.
 
 ### Adding Custom Rules
 
@@ -907,20 +910,20 @@ Each step runs independently (failure in one provider does not block the others)
 The `deploy.sh` script manages setup and optional scheduler install:
 
 ```bash
-# Install and opt into scheduling
+#Install and opt into scheduling
 INSTALL_LAUNCH_AGENT=1 ./deploy.sh
 
-# Preferred local on-demand intake
+#Preferred local on-demand intake
 scripts/intake_now.sh
 
-# Check scheduler status
+#Check scheduler status
 launchctl list | grep mail_automation
 
-# View logs
+#View logs
 tail -f ~/System/Logs/mail_automation/launchd.stdout.log
 
-# Unload scheduler
-launchctl bootout gui/$(id -u)/com.user.mail_automation
+#Unload scheduler (replace UID with your numeric user id from `id -u`)
+launchctl bootout gui/UID/com.user.mail_automation
 ```
 
 ---

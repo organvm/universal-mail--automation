@@ -82,7 +82,10 @@ class IMAPProvider(EmailProvider):
             port: IMAP port (default 993 for SSL)
         """
         self.host = host or os.getenv("IMAP_HOST", "imap.gmail.com")
-        self.user = user or os.getenv("IMAP_USER")
+        # IMAP_USER is the legacy name; the limen credential organ hydrates the account address
+        # as GMAIL_USER (creds-hydrate DEFAULT_MAP → ~/.limen.env). Fall back to it so the keyed
+        # path authenticates from the organ's env without a per-host IMAP_USER alias.
+        self.user = user or os.getenv("IMAP_USER") or os.getenv("GMAIL_USER")
         self._password = password
         self.use_gmail_extensions = use_gmail_extensions
         self.port = port
@@ -102,8 +105,13 @@ class IMAPProvider(EmailProvider):
         if self._password:
             return self._password
 
-        if os.getenv("IMAP_PASS"):
-            return os.getenv("IMAP_PASS")
+        # GMAIL_APP_PASSWORD is the credential organ's canonical hydrated name (creds-hydrate
+        # DEFAULT_MAP, --verify'd by an IMAP login). Prefer it over the legacy IMAP_PASS, which
+        # can linger STALE in ~/.limen.env and silently shadow the valid app-password (the
+        # 2026-07-23 dark-feed bug: IMAP_PASS was stale while GMAIL_APP_PASSWORD was valid).
+        for name in ("GMAIL_APP_PASSWORD", "IMAP_PASS"):
+            if os.getenv(name):
+                return os.getenv(name)
 
         # Try 1Password CLI
         op_account = os.getenv("OP_ACCOUNT")

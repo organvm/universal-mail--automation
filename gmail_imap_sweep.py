@@ -229,8 +229,8 @@ def sweep_starred_noise(provider, limit, apply):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Gmail IMAP sweep — archive noise by dropping the INBOX label (dry run by default).")
-    ap.add_argument("--user", default=os.getenv("IMAP_USER"),
-                    help="mailbox address (or set IMAP_USER); no default — names are not hardcoded")
+    ap.add_argument("--user", default=os.getenv("IMAP_USER") or os.getenv("GMAIL_USER"),
+                    help="mailbox address (or set IMAP_USER / GMAIL_USER); no default — names are not hardcoded")
     ap.add_argument("--limit", type=int, default=400)
     ap.add_argument("--mailbox", default="INBOX")
     ap.add_argument("--apply", action="store_true",

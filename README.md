@@ -177,6 +177,12 @@ findings are not represented in current operator lanes.
 
 ---
 
+## How it works
+
+Universal Mail Automation unifies email triage across Gmail, Outlook, and iCloud by applying one shared categorization engine with Eisenhower-based priority routing and time-aware escalation. Every message is matched against a taxonomy of 28 categories (Dev, Finance, AI, Travel, Marketing, etc.), assigned to one of four priority tiers, and routed to keep critical emails in your inbox while archiving routine updates. Old messages that go untouched automatically escalate to higher tiers, ensuring nothing is missed.
+
+---
+
 ## Technical Architecture
 
 ### System Diagram
@@ -949,6 +955,12 @@ This repository is part of a coordinated multi-org system. Contributions are wel
 - **Documentation** — Usage guides, configuration examples, troubleshooting
 
 Please open an issue before submitting large changes to discuss approach and scope.
+
+---
+
+## Contact
+
+For questions, issues, or contributions, visit the repository on GitHub: [@4444j99](https://github.com/4444j99)
 
 ---
 

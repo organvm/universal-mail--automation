@@ -7,7 +7,7 @@ import subprocess
 import time
 
 from core.flag_workflow import _atomic_write_private_json, _json_object_from_path, sha256_hex
-from core.mail_inventory import seal, validate
+from core.mail_inventory import seal, validate, validated_pages
 from core.flag_transactions import AdvisoryFileLock
 
 
@@ -29,10 +29,32 @@ def discover_signals(messages):
             objects.setdefault(key, {"id": key, "object": obj, "notifications": []})
             provenance = {"message": message.get("identity", message.get("message_id")),
                           "provenance": message.get("provenance", []), "url": match[0],
-                          "fragment": fragment}
+                          "fragment": fragment, "evidence_receipt": message.get("content_hash")}
             if provenance not in objects[key]["notifications"]:
                 objects[key]["notifications"].append(provenance)
     return list(objects.values())
+
+
+def inventory_signal_messages(root):
+    """Stream exact header signals without waiting for unrelated body reads.
+
+    Header discovery is intake evidence only. It does not establish complete
+    correspondence coverage or permission to archive a notification.
+    """
+    manifest = _json_object_from_path(root / "manifest.json", "inventory manifest")
+    validate(manifest)
+    if manifest.get("schema") != "uma.mail_inventory.v1" or manifest.get("complete") is not True:
+        raise ValueError("complete inventory required for stable GitHub discovery")
+    for state in manifest["surfaces"]:
+        for page in validated_pages(root, manifest, state):
+            for message in page["messages"]:
+                if message["retention_class"] != "retained":
+                    continue
+                yield {**message, "content_hash": page["content_hash"], "provenance": [{
+                    "identity": message["identity"], "native": message["native"],
+                    "memberships": message["memberships"],
+                    "inventory_sha256": manifest["content_hash"],
+                    "discovery_scope": "retained_inventory_headers"}]}
 
 
 class GitHubReader:
@@ -163,6 +185,9 @@ def cmd_github(args):
         root = Path(args.output).expanduser()
         source_path = root / "signals.json"
         if args.operation == "discover":
+            inventories = getattr(args, "inventory", [])
+            if not args.research and not inventories:
+                raise ValueError("GitHub discovery requires an explicit research or inventory source")
             messages = []
             for directory in args.research:
                 research_root = Path(directory).expanduser()
@@ -179,12 +204,20 @@ def cmd_github(args):
                         if message["content_hash"] != receipt["sha256"]:
                             raise ValueError("research message lineage mismatch")
                         messages.append(message)
-            signals = discover_signals(messages)
+            count = len(messages)
+            def stream():
+                nonlocal count
+                yield from messages
+                for directory in inventories:
+                    for message in inventory_signal_messages(Path(directory).expanduser()):
+                        count += 1
+                        yield message
+            signals = discover_signals(stream())
             result = seal({"schema": "uma.github_signals.v1", "signals": signals})
             if source_path.exists() and _json_object_from_path(source_path, "signals") != result:
                 raise ValueError("changed discovery requires a new output directory")
             _atomic_write_private_json(source_path, result, prefix=".tmp-signals-")
-            print(json.dumps({"objects": len(signals), "messages": len(messages), "writes_performed": 0}))
+            print(json.dumps({"objects": len(signals), "messages": count, "writes_performed": 0}))
         else:
             source = _json_object_from_path(source_path, "signals")
             validate(source)
@@ -204,6 +237,7 @@ def add_parser(subparsers):
     parser = subparsers.add_parser("mail-github-evidence", help="Discover and resume authenticated exact-object GitHub research")
     parser.add_argument("operation", choices=("discover", "resolve"))
     parser.add_argument("--research", action="append", default=[])
+    parser.add_argument("--inventory", action="append", default=[], help="Completed native inventory; exact header signals retain every folder membership")
     parser.add_argument("--output", required=True)
     parser.add_argument("--limit", type=int, default=25)
     parser.set_defaults(func=cmd_github)

@@ -129,6 +129,7 @@ class OutlookProvider(EmailProvider):
         self._category_cache: Dict[str, str] = {}  # name -> id
         self._msal_app = None
         self._session = None
+        self._identity_evidence = None
 
     def _get_msal_app(self):
         """Get or create MSAL PublicClientApplication."""
@@ -165,8 +166,19 @@ class OutlookProvider(EmailProvider):
         """Save MSAL token cache to disk."""
         app = self._get_msal_app()
         if app.token_cache.has_state_changed:
-            with open(self.token_cache_path, "w") as f:
-                f.write(app.token_cache.serialize())
+            import tempfile
+            from pathlib import Path
+            target = Path(self.token_cache_path).expanduser()
+            fd, temporary = tempfile.mkstemp(prefix=".outlook-token-", dir=target.parent)
+            try:
+                with os.fdopen(fd, "w") as output:
+                    output.write(app.token_cache.serialize())
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, target)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
     def _acquire_token(self) -> str:
         """Acquire access token via MSAL."""
@@ -191,6 +203,7 @@ class OutlookProvider(EmailProvider):
             scopes=self.scopes,
             prompt="select_account",
             login_hint=self.account,
+            timeout=480,
         )
 
         if "access_token" not in result:
@@ -242,14 +255,41 @@ class OutlookProvider(EmailProvider):
     def connect(self) -> None:
         """Establish connection via OAuth."""
         self._access_token = self._acquire_token()
-        profile = self._api_get(f"{GRAPH_API_BASE}/me", params={"$select": "id,mail,userPrincipalName"})
-        identities = {str(profile.get(k) or "").casefold() for k in ("mail", "userPrincipalName")}
-        if not self.account or self.account.casefold() not in identities:
+        try:
+            self._identity_evidence = self.verify_authenticated_identity()
+        except Exception:
             self.disconnect()
-            raise RuntimeError("authenticated Outlook identity does not match selected account")
+            raise
         self._init_folder_cache()
         self._init_category_cache()
         logger.info("Outlook provider connected")
+
+    def verify_authenticated_identity(self):
+        """Verify account through Graph without adding User.Read permission.
+
+        Mail-only consent can reject /me profile reads. In that case require the
+        explicit /users/{account} Inbox to equal the signed-in /me Inbox. Both
+        reads carry ImmutableId and use the same authenticated session.
+        """
+        from urllib.parse import quote
+        import requests
+        if not self.account or not self._access_token:
+            raise RuntimeError("authenticated Outlook identity unavailable")
+        try:
+            profile = self._api_get(f"{GRAPH_API_BASE}/me", params={"$select": "id,mail,userPrincipalName"})
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 403:
+                raise
+            inbox = self._api_get(f"{GRAPH_API_BASE}/me/mailFolders/inbox", params={"$select": "id"})
+            selected = self._api_get(f"{GRAPH_API_BASE}/users/{quote(self.account, safe='')}/mailFolders/inbox", params={"$select": "id"})
+            if not inbox.get("id") or inbox["id"] != selected.get("id"):
+                raise RuntimeError("authenticated Outlook identity does not match selected account")
+            return {"account": self.account, "server_mailbox_id": inbox["id"],
+                    "identity_method": "explicit_account_inbox_equals_authenticated_inbox"}
+        identities = {str(profile.get(k) or "").casefold() for k in ("mail", "userPrincipalName")}
+        if self.account.casefold() not in identities:
+            raise RuntimeError("authenticated Outlook identity does not match selected account")
+        return {"account": self.account, "server_account_id": profile["id"], "identity_method": "graph_profile"}
 
     def disconnect(self) -> None:
         """Close connection."""
@@ -257,6 +297,7 @@ class OutlookProvider(EmailProvider):
             self._session.close()
             self._session = None
         self._access_token = None
+        self._identity_evidence = None
         logger.debug("Outlook provider disconnected")
 
     def _init_folder_cache(self) -> None:

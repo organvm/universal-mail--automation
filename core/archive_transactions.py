@@ -15,14 +15,26 @@ from core.flag_workflow import _atomic_write_private_json, _json_object_from_pat
 from core.obligation_workflow import MessageIdentity, Obligation, POLICY_HASH, reconcile, verify_archive
 
 
-def build_plan(obligations: list[Obligation], observations: list[dict], *, now: datetime) -> dict:
+def verify_observation(mutation, observed, *, native_v2=False):
+    status = verify_archive(provider=mutation["identity"]["provider"],
+        expected=MessageIdentity.model_validate(mutation["identity"]),
+        observed=observed, destination=mutation["destination"])
+    if native_v2 and (observed.get("message_present") is not True or
+            not observed.get("preserved_sha256") or observed["preserved_sha256"] != mutation["before"].get("preserved_sha256")
+            or observed.get("human_override") is not False or observed.get("protected") is not False):
+        return "conflicted"
+    return status
+
+
+def build_plan(obligations: list[Obligation], observations: list[dict], *, now: datetime,
+               coverage: dict | None = None) -> dict:
     rows = reconcile(obligations, now=now)["obligations"]
     eligible = {sha256_hex(m)
                 for r in rows if r["archive_eligible"] for m in r["messages"]}
     mutations = []
     for observed in observations:
         identity = MessageIdentity.model_validate(observed["identity"])
-        if identity.provider not in ("gmail", "icloud"):
+        if identity.provider not in ("gmail", "icloud", "outlook"):
             raise ValueError("provider-specific server archive proof is unavailable")
         key = sha256_hex(identity.model_dump())
         if key not in eligible or observed.get("server_confirmed") is not True:
@@ -33,8 +45,8 @@ def build_plan(obligations: list[Obligation], observations: list[dict], *, now: 
             raise ValueError("protection and override checks must explicitly pass")
         mutation = {"identity": identity.model_dump(), "before": observed,
                     "destination": observed.get("archive_destination")}
-        if identity.provider == "icloud" and not mutation["destination"]:
-            raise ValueError("iCloud archive destination required")
+        if identity.provider in ("icloud", "outlook") and not mutation["destination"]:
+            raise ValueError("folder provider archive destination required")
         mutation["id"] = "archive-" + sha256_hex(mutation)
         mutations.append(mutation)
     if not 1 <= len(mutations) <= 25 or len({m["identity"]["account"] for m in mutations}) != 1:
@@ -44,6 +56,30 @@ def build_plan(obligations: list[Obligation], observations: list[dict], *, now: 
     plan = {"schema": "uma.archive_plan.v1", "policy_sha256": POLICY_HASH,
             "created_at": now.isoformat(), "mutations": mutations,
             "obligations": [o.model_dump(mode="json") for o in obligations]}
+    if coverage is not None:
+        from core.mail_inventory import validate
+        validate(coverage)
+        if (coverage.get("schema") not in ("uma.archive_coverage.v1", "uma.archive_coverage.v2") or coverage.get("complete") is not True
+                or coverage.get("questions") or not coverage.get("inventory_receipts")
+                or not coverage.get("research_receipts")):
+            raise ValueError("complete inventory and research coverage evidence required")
+        checked = datetime.fromisoformat(coverage["observed_at"])
+        if checked.tzinfo is None or not timedelta(0) <= now - checked <= timedelta(hours=24):
+            raise ValueError("coverage evidence is stale")
+        covered = set(coverage["message_keys"])
+        from core.flag_workflow import require_hex256
+        for field in ("inventory_receipts", "research_receipts", "message_keys"):
+            if not isinstance(coverage[field], list) or not coverage[field]:
+                raise ValueError("coverage receipt lists cannot be empty")
+            for digest in coverage[field]:
+                require_hex256(digest, "coverage " + field)
+        if any(MessageIdentity.model_validate(m["identity"]).key not in covered for m in mutations):
+            raise ValueError("archive identity not covered by research")
+        if coverage["schema"] == "uma.archive_coverage.v2":
+            reviewed = {o.id: sha256_hex(o.model_dump(mode="json")) for o in obligations}
+            if reviewed != coverage["reviewed_obligations"]:
+                raise ValueError("archive plan must retain the complete reviewed obligation set")
+        plan.update(schema="uma.archive_plan.v2", coverage=coverage)
     plan["content_hash"] = sha256_hex(plan)
     return plan
 
@@ -53,7 +89,7 @@ def validate_plan(plan: dict, now: datetime) -> None:
     if created.tzinfo is None or not timedelta(0) <= now - created <= timedelta(hours=24):
         raise ValueError("archive plan is stale or future-dated")
     rebuilt = build_plan([Obligation.model_validate(o) for o in plan["obligations"]],
-                         [m["before"] for m in plan["mutations"]], now=created)
+                         [m["before"] for m in plan["mutations"]], now=created, coverage=plan.get("coverage"))
     if rebuilt != plan or plan["policy_sha256"] != POLICY_HASH:
         raise ValueError("archive plan lineage mismatch")
 
@@ -84,7 +120,12 @@ class ArchiveEngine:
         by_id = {m["id"]: m for m in plan["mutations"]}
         if any(i not in by_id for i in selected):
             raise ValueError("selection does not belong to this plan")
-        required = ("observe_archive", "archive_if_unchanged", "restore_archive_if_unchanged")
+        contract = getattr(provider, "archive_contract", None)
+        native_v2 = isinstance(contract, dict) and contract.get("schema") == "uma.archive_adapter.v2"
+        if native_v2 and (plan["schema"] != "uma.archive_plan.v2" or plan["coverage"]["schema"] != "uma.archive_coverage.v2"):
+            raise ValueError("production archive requires a coverage-bound v2 plan")
+        required = (("observe_archive", "dispatch_archive", "restore_archive") if native_v2 else
+                    ("observe_archive", "archive_if_unchanged", "restore_archive_if_unchanged"))
         if any(not callable(getattr(provider, name, None)) for name in required):
             return {"status": "blocked", "reason": "conditional_archive_adapter_unavailable", "writes_performed": 0}
         with AdvisoryFileLock(self.state_dir / "archive.lock"):
@@ -93,6 +134,8 @@ class ArchiveEngine:
             receipt = {"schema": "uma.archive_receipt.v1", "plan_sha256": plan["content_hash"],
                        "approval_sha256": sha256_hex(approval), "writes_performed": 0,
                        "status": "prepared", "results": [{"id": i, "status": "unattempted"} for i in selected]}
+            if native_v2:
+                receipt["adapter_contract"] = contract
             self._persist(plan, receipt)
             deadline = time.monotonic() + 600
             # All-or-zero preflight before the first intent reaches dispatch.
@@ -129,7 +172,10 @@ class ArchiveEngine:
                 row["status"] = "uncertain"
                 receipt["writes_performed"] += 1  # Count possible dispatch even on timeout.
                 try:
-                    dispatched = provider.archive_if_unchanged(mutation)
+                    dispatched = provider.dispatch_archive(mutation) if native_v2 else provider.archive_if_unchanged(mutation)
+                    if native_v2:
+                        row["dispatch"] = dispatched
+                        dispatched = {"applied": True, "not_dispatched": False}.get(dispatched.get("status"))
                     if dispatched is False:
                         receipt["writes_performed"] -= 1
                         row["status"] = "conflicted"
@@ -138,9 +184,7 @@ class ArchiveEngine:
                             if delay:
                                 time.sleep(delay)
                             observed = provider.observe_archive(mutation)
-                            status = verify_archive(provider=mutation["identity"]["provider"],
-                                expected=MessageIdentity.model_validate(mutation["identity"]),
-                                observed=observed, destination=mutation["destination"])
+                            status = verify_observation(mutation, observed, native_v2=native_v2)
                             row["status"] = status
                             row["after"] = observed
                             if status == "conflicted":
@@ -160,7 +204,9 @@ class ArchiveEngine:
     def rollback(self, plan: dict, provider) -> dict:
         # Validate original lineage, allowing old plans for override-safe recovery.
         validate_plan(plan, datetime.fromisoformat(plan["created_at"]))
-        if not callable(getattr(provider, "restore_archive_if_unchanged", None)):
+        native_v2 = getattr(provider, "archive_contract", {}).get("schema") == "uma.archive_adapter.v2"
+        restore = getattr(provider, "restore_archive" if native_v2 else "restore_archive_if_unchanged", None)
+        if not callable(restore):
             return {"status": "blocked", "reason": "conditional_archive_adapter_unavailable", "writes_performed": 0}
         with AdvisoryFileLock(self.state_dir / "archive.lock"):
             receipt = _json_object_from_path(self._path(plan), "archive receipt")
@@ -180,7 +226,10 @@ class ArchiveEngine:
                 self._persist(plan, receipt)
                 receipt["rollback_writes_performed"] = receipt.get("rollback_writes_performed", 0) + 1
                 try:
-                    dispatched = provider.restore_archive_if_unchanged(mutation, current)
+                    dispatched = restore(mutation, current)
+                    if native_v2:
+                        row["rollback_dispatch"] = dispatched
+                        dispatched = {"applied": True, "not_dispatched": False}.get(dispatched.get("status"))
                     row["status"] = "rollback_uncertain"
                     if dispatched is False:
                         receipt["rollback_writes_performed"] -= 1
@@ -190,6 +239,11 @@ class ArchiveEngine:
                         # Revision may advance; all original semantic fields must match.
                         comparable = {k: v for k, v in after.items() if k != "revision"}
                         before = {k: v for k, v in mutation["before"].items() if k != "revision"}
+                        if native_v2:
+                            fields = ("identity", "server_confirmed", "message_present", "in_inbox", "mailboxes",
+                                      "label_ids", "preserved_sha256", "protected", "human_override")
+                            comparable = {k: after.get(k) for k in fields}
+                            before = {k: mutation["before"].get(k) for k in fields}
                         if comparable == before:
                             row["status"] = "rolled_back"
                 except Exception:
@@ -206,12 +260,11 @@ class ArchiveEngine:
         if not callable(getattr(provider, "observe_archive", None)):
             return {"status": "blocked", "reason": "server_archive_proof_unavailable", "writes_performed": 0}
         results = []
+        native_v2 = getattr(provider, "archive_contract", {}).get("schema") == "uma.archive_adapter.v2"
         for mutation in plan["mutations"]:
             try:
                 observed = provider.observe_archive(mutation)
-                status = verify_archive(provider=mutation["identity"]["provider"],
-                    expected=MessageIdentity.model_validate(mutation["identity"]),
-                    observed=observed, destination=mutation["destination"])
+                status = verify_observation(mutation, observed, native_v2=native_v2)
             except Exception:
                 status = "uncertain"
             results.append({"id": mutation["id"], "status": status})
@@ -228,29 +281,43 @@ class ArchiveEngine:
 
 def cmd_archive(args):
     import json
-    from providers.gmail import GmailProvider
-    from providers.imap import IMAPProvider
+    from providers.archive_factory import archive_provider
+    from core.archive_guard import ArchiveGuard
+    from core.flag_activation import default_flags_state_dir
     try:
         source = _json_object_from_path(Path(args.input).expanduser(), "archive input")
         if args.operation == "plan":
             result = build_plan([Obligation.model_validate(o) for o in source["obligations"]],
-                                source["archive_observations"], now=datetime.now(timezone.utc))
+                                source["archive_observations"], now=datetime.now(timezone.utc), coverage=source.get("coverage"))
         else:
             engine = ArchiveEngine(Path(args.state_dir).expanduser())
-            provider = GmailProvider() if args.provider == "gmail" else IMAPProvider()
-            # Legacy providers fail the capability check before authentication.
-            if args.operation == "apply":
-                if not args.approval:
-                    raise ValueError("--approval is required")
-                approval = _json_object_from_path(Path(args.approval).expanduser(), "archive approval")
-                result = engine.apply(source, approval, provider)
-            elif args.operation == "rollback":
-                result = engine.rollback(source, provider)
-            else:
-                result = engine.verify(source, provider)
+            if not args.guard_evidence:
+                raise ValueError("--guard-evidence with exact override bindings is required")
+            targets = source.get("mutations", [])
+            if not targets or any(m["identity"]["provider"] != args.provider or
+                                  m["identity"]["account"] != args.account for m in targets):
+                raise ValueError("explicit provider/account does not match every archive target")
+            guard = ArchiveGuard(Path(args.guard_evidence).expanduser(), default_flags_state_dir() / "overrides.json")
+            # Validate all guard bindings before opening a provider connection.
+            for mutation in targets:
+                guard(mutation["identity"])
+            with archive_provider(args, guard) as provider:
+                if args.operation == "observe":
+                    result = {"schema": "uma.archive_observations.v1",
+                              "archive_observations": [provider.observe_archive(m) for m in targets],
+                              "writes_performed": 0}
+                elif args.operation == "apply":
+                    if not args.approval:
+                        raise ValueError("--approval is required")
+                    approval = _json_object_from_path(Path(args.approval).expanduser(), "archive approval")
+                    result = engine.apply(source, approval, provider)
+                elif args.operation == "rollback":
+                    result = engine.rollback(source, provider)
+                else:
+                    result = engine.verify(source, provider)
         _atomic_write_private_json(Path(args.output).expanduser(), result, prefix=".tmp-archive-cli-")
-    except (ValueError, OSError, KeyError) as exc:
-        print(json.dumps({"status": "blocked", "error": str(exc)}))
+    except (ValueError, OSError, KeyError, RuntimeError) as exc:
+        print(json.dumps({"status": "blocked", "error_type": type(exc).__name__, "writes_performed": 0}))
         return 2
     print(json.dumps({"status": result.get("status", "written"), "output": args.output,
                       "reason": result.get("reason"), "writes_performed": result.get("writes_performed", 0)}))

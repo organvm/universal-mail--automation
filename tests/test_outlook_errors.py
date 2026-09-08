@@ -66,6 +66,41 @@ def test_graph_session_uses_immutable_ids():
     provider.disconnect()
 
 
+@pytest.mark.parametrize("selected", ["first@example.invalid", "second@example.invalid"])
+def test_mail_only_identity_requires_matching_explicit_account_inbox(monkeypatch, selected):
+    import requests
+    provider = OutlookProvider(client_id="test", account=selected)
+    provider._access_token = "test"
+    calls = []
+    def get(url, **kwargs):
+        calls.append(url)
+        if url.endswith("/me"):
+            response = requests.Response()
+            response.status_code = 403
+            raise requests.HTTPError(response=response)
+        return {"id": "same-immutable-inbox"}
+    monkeypatch.setattr(provider, "_api_get", get)
+    result = provider.verify_authenticated_identity()
+    assert result["account"] == selected
+    assert result["identity_method"] == "explicit_account_inbox_equals_authenticated_inbox"
+    assert any("/users/" + selected.replace("@", "%40") + "/mailFolders/inbox" in url for url in calls)
+
+
+def test_mail_only_identity_rejects_different_mailbox(monkeypatch):
+    import requests
+    provider = OutlookProvider(client_id="test", account="first@example.invalid")
+    provider._access_token = "test"
+    def get(url, **kwargs):
+        if url.endswith("/me"):
+            response = requests.Response()
+            response.status_code = 403
+            raise requests.HTTPError(response=response)
+        return {"id": "a" if "/me/" in url else "b"}
+    monkeypatch.setattr(provider, "_api_get", get)
+    with pytest.raises(RuntimeError, match="identity"):
+        provider.verify_authenticated_identity()
+
+
 def _raise(exc):
     def _inner(*args, **kwargs):
         raise exc

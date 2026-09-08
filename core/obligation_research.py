@@ -95,6 +95,12 @@ def cmd_research(args):
     from providers.mailapp import MailAppProvider
     try:
         observation = _json_object_from_path(Path(args.input).expanduser(), "observation")
+        if observation.get("schema") == "uma.research_corpus.v1":
+            from core.inventory_cli import cmd_inventory
+            if not args.provider or not args.account:
+                raise ValueError("native corpus research requires explicit provider and account")
+            args.corpus = args.input
+            return cmd_inventory(args)
         if observation.get("schema") != "uma.obligation_observation.v1":
             raise ValueError("a current observation artifact is required")
         with MailAppProvider() as provider:

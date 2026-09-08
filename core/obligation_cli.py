@@ -13,7 +13,18 @@ def run(args) -> int:
     now = datetime.now(timezone.utc)
     try:
         source = _json_object_from_path(Path(args.input).expanduser(), "obligation input")
-        if args.operation == "benchmark":
+        if args.operation in ("review-record", "archive-coverage"):
+            from core.corpus_review import record_review, archive_coverage
+            if not args.corpus or not args.research or not args.reviews:
+                raise ValueError("--corpus, --research and --reviews are required")
+            corpus = _json_object_from_path(Path(args.corpus).expanduser(), "corpus")
+            if args.operation == "review-record":
+                result = record_review(corpus, research_root=Path(args.research).expanduser(),
+                                       root=Path(args.reviews).expanduser(), review=source)
+            else:
+                result = archive_coverage(corpus, research_root=Path(args.research).expanduser(),
+                    reviews_root=Path(args.reviews).expanduser(), message_keys=source["message_keys"])
+        elif args.operation == "benchmark":
             result = evaluate_benchmark(source["cases"], now=now)
         elif args.operation == "flag-candidates":
             if not args.flag_plan:
@@ -42,13 +53,22 @@ def run(args) -> int:
 
 
 def add_parser(subparsers):
+    from core.github_evidence import add_parser as add_github_parser
+    add_github_parser(subparsers)
+    from core.inventory_cli import add_parser as add_inventory_parser
+    add_inventory_parser(subparsers)
     from core.archive_transactions import cmd_archive
     archive_parser = subparsers.add_parser("archive-workflow", help="Conditional archive contracts; unsupported adapters fail closed")
-    archive_parser.add_argument("operation", choices=["plan", "apply", "verify", "reconcile", "rollback"])
+    archive_parser.add_argument("operation", choices=["observe", "plan", "apply", "verify", "reconcile", "rollback"])
     archive_parser.add_argument("--input", required=True)
     archive_parser.add_argument("--output", required=True)
     archive_parser.add_argument("--approval")
-    archive_parser.add_argument("--provider", choices=["gmail", "icloud"], default="gmail")
+    archive_parser.add_argument("--provider", choices=["gmail", "icloud", "outlook"], default="gmail")
+    archive_parser.add_argument("--account")
+    archive_parser.add_argument("--env-file", default="~/.limen.env")
+    archive_parser.add_argument("--op-item")
+    archive_parser.add_argument("--op-vault", default="Personal")
+    archive_parser.add_argument("--guard-evidence")
     archive_parser.add_argument("--state-dir", default="~/.local/share/uma/archive")
     archive_parser.set_defaults(func=cmd_archive)
     from core.obligation_research import cmd_research
@@ -56,17 +76,31 @@ def add_parser(subparsers):
     research_parser.add_argument("--input", required=True)
     research_parser.add_argument("--output", required=True)
     research_parser.add_argument("--thread-limit", type=int, default=25)
+    research_parser.add_argument("--work-units", type=int, default=1, help="Native corpus units within one 600-second ceiling")
     research_parser.add_argument("--resume", help="Validated prior research artifact for the same observation")
+    research_parser.add_argument("--provider", choices=("gmail", "icloud", "outlook"))
+    research_parser.add_argument("--account")
+    research_parser.add_argument("--env-file", default="~/.limen.env")
+    research_parser.add_argument("--op-item")
+    research_parser.add_argument("--op-vault", default="Personal")
     research_parser.set_defaults(func=cmd_research)
     from core.obligation_refresh import cmd_refresh
     refresh_parser = subparsers.add_parser("mail-observe", help="Refresh Inbox and all flagged surfaces without writes")
     refresh_parser.add_argument("--account", action="append", required=True)
     refresh_parser.add_argument("--output", required=True)
-    refresh_parser.add_argument("--shadow", required=True)
+    refresh_parser.add_argument("--shadow", help="Required for legacy Mail.app observations")
     refresh_parser.add_argument("--limit", type=int, default=500)
+    refresh_parser.add_argument("--provider", choices=("gmail", "icloud", "outlook"))
+    refresh_parser.add_argument("--env-file", default="~/.limen.env")
+    refresh_parser.add_argument("--op-item")
+    refresh_parser.add_argument("--op-vault", default="Personal")
+    refresh_parser.add_argument("--max-pages", type=int, default=25)
     refresh_parser.set_defaults(func=cmd_refresh)
     parser = subparsers.add_parser("mail-workflow", help="Evidence-backed obligation shadow workflow")
-    parser.add_argument("operation", choices=["plan", "reconcile", "import-legacy", "benchmark", "flag-candidates"])
+    parser.add_argument("operation", choices=["plan", "reconcile", "import-legacy", "benchmark", "flag-candidates", "review-record", "archive-coverage"])
+    parser.add_argument("--corpus")
+    parser.add_argument("--research")
+    parser.add_argument("--reviews")
     parser.add_argument("--flag-plan", help="Preserved versioned native mutation plan")
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True, help="Private atomic JSON artifact")

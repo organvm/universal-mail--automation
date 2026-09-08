@@ -7,6 +7,11 @@ from core.archive_transactions import ArchiveEngine, build_plan
 from core.obligation_workflow import Evidence, MessageIdentity, Obligation, POLICY_HASH
 
 
+@pytest.fixture(autouse=True)
+def no_verification_sleep(monkeypatch):
+    monkeypatch.setattr("core.archive_transactions.time.sleep", lambda _: None)
+
+
 def setup(count=2):
     now = datetime.now(timezone.utc)
     obs, obligations = [], []
@@ -112,3 +117,31 @@ def test_wrong_obligation_identity_does_not_authorize_archive():
     with pytest.raises(ValueError, match="evidence-backed"):
         build_plan([Obligation.model_validate(o) for o in plan["obligations"]], observations,
                    now=datetime.now(timezone.utc))
+
+
+def test_archive_late_inbox_reversion_is_not_verified(tmp_path, monkeypatch):
+    plan, approval = setup(1)
+    provider = Provider(plan)
+    calls = []
+    def sleep(delay):
+        calls.append(delay)
+        if delay == 3:
+            provider.states[plan["mutations"][0]["id"]].update(in_inbox=True, label_ids=["INBOX"])
+    monkeypatch.setattr("core.archive_transactions.time.sleep", sleep)
+    result = ArchiveEngine(tmp_path / "state").apply(plan, approval, provider)
+    assert result["status"] == "unchanged"
+    assert calls == [2, 3]
+    assert provider.writes == 1
+
+
+def test_reconciliation_is_persisted_without_dispatch(tmp_path):
+    import json
+    plan, _ = setup(1)
+    provider = Provider(plan)
+    engine = ArchiveEngine(tmp_path / "state")
+    result = engine.verify(plan, provider)
+    stored = list((tmp_path / "state").glob("verification-*.json"))
+    assert len(stored) == 1
+    assert json.loads(stored[0].read_text()) == result
+    assert provider.writes == 0
+    assert result["replay_authorized"] is False

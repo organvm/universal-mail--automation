@@ -96,6 +96,7 @@ def test_provider_specific_archive_proof():
     cloud_observed = {"identity": cloud.model_dump(), "server_confirmed": True}
     assert verify_archive(provider="icloud", expected=cloud, observed=cloud_observed, destination="Archive") == "uncertain"
     cloud_observed["mailboxes"] = ["Archive"]
+    cloud_observed["in_inbox"] = False
     assert verify_archive(provider="icloud", expected=cloud, observed=cloud_observed, destination="Archive") == "verified"
     observed["server_confirmed"] = False
     assert verify_archive(provider="gmail", expected=MSG, observed=observed) == "uncertain"
@@ -104,3 +105,17 @@ def test_provider_specific_archive_proof():
 def test_missing_labels_or_wrong_identity_are_not_archive_proof():
     assert verify_archive(provider="gmail", expected=MSG, observed={"identity": MSG.model_dump(), "server_confirmed": True}) == "uncertain"
     assert verify_archive(provider="gmail", expected=MSG, observed={}) == "conflicted"
+
+
+@pytest.mark.parametrize("label", ["TRASH", "SPAM"])
+def test_gmail_destructive_membership_is_not_archive(label):
+    observed = {"identity": MSG.model_dump(), "server_confirmed": True, "label_ids": [label]}
+    assert verify_archive(provider="gmail", expected=MSG, observed=observed) == "conflicted"
+
+
+def test_icloud_destination_copy_is_not_archive():
+    cloud = MSG.model_copy(update={"provider": "icloud"})
+    observed = {"identity": cloud.model_dump(), "server_confirmed": True,
+                "mailboxes": ["Archive", "INBOX"], "in_inbox": False}
+    assert verify_archive(provider="icloud", expected=cloud, observed=observed,
+                          destination="Archive") == "unchanged"

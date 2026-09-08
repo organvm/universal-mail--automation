@@ -7,6 +7,7 @@ An obligation is independent work; a message is evidence. Flag color is a workfl
 ```sh
 umail mail-observe --account ACCOUNT --output PRIVATE/observation.json --shadow PRIVATE/shadow.json
 umail mail-research --input PRIVATE/observation.json --output PRIVATE/research.json --thread-limit 25
+umail mail-research --input PRIVATE/observation.json --resume PRIVATE/research.json --output PRIVATE/research.json --thread-limit 25
 umail mail-workflow plan --input PRIVATE/evidence.json --output PRIVATE/obligations.json
 umail mail-workflow reconcile --input PRIVATE/evidence.json --output PRIVATE/obligations.json
 umail mail-workflow flag-candidates --input PRIVATE/obligations.json --flag-plan PRIVATE/plan.json --output PRIVATE/candidates.json
@@ -17,6 +18,21 @@ umail flags reconcile --plan PRIVATE/plan.json --ledger PRIVATE/transactions.jso
 ```
 
 `flags plan`, `flags human-canary-approve`, `flags apply` and `flags rollback` retain the preserved versioned contracts and activation restrictions; consult their `--help`. Verification is observation only: it never unfreezes a transaction or authorizes replay.
+
+Research continuation validates the observation digest and prior artifact hash before
+advancing the candidate cursor. Each invocation attempts at most 25 additional
+candidates. Failed reads stay recorded as blockers even after the cursor advances;
+advancing the cursor does not resolve their questions. Old artifacts without a
+continuation hash cannot be resumed. Interrupted seeds may be read again, and long
+threads still require a provider continuation capability. These limits prevent a
+candidate checkpoint from being mistaken for complete correspondence research.
+
+Outlook connections require `account=` or `OUTLOOK_ACCOUNT`. Cached-token selection
+and authenticated Graph identity must match that account. Every Graph request uses
+the [immutable ID preference](https://learn.microsoft.com/en-us/graph/outlook-immutable-id).
+Existing stored mutable IDs are not migrated by this change; regenerate observations
+before preparing plans. Identity verification may require authentication with the
+service; no additional scopes are automatically granted.
 
 `flag-candidates` is the explicit compatibility bridge: it binds independent obligation records to exact preserved native mutation ids and suggests target colors for review. It does not rewrite the preserved plan, sign approvals, or bypass the canary gate. Unknown siblings keep REVIEW visible; coverage gaps and overrides block selection readiness.
 

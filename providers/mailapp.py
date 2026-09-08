@@ -1041,7 +1041,9 @@ class MailAppProvider(EmailProvider):
         # Observe immediately, then at +2s and +5s. Never redispatch to
         # compensate for sync lag. A third state is a possible human edit.
         error = "pending verification"
+        settled = False
         for delay in (0, 2, 3):
+            settled = False
             if delay:
                 time.sleep(delay)
             try:
@@ -1056,10 +1058,13 @@ class MailAppProvider(EmailProvider):
             raw = fields["native_index"]
             flagged = fields.get("is_flagged")
             if raw is not None and int(raw) == index and flagged == str(index != -1).lower():
-                return True
+                settled = True
+                continue
             if raw is not None and int(raw) not in (expected_native, index):
                 raise ProviderWriteAmbiguous("human override during verification")
             error = "native color or flagged status not synchronized"
+        if settled:
+            return True
         raise ProviderWriteAmbiguous(f"post-write verification pending: {error}")
 
     def clear_flag_ref(self, ref: MessageReference) -> bool:

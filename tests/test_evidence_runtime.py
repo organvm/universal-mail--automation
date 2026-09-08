@@ -29,6 +29,34 @@ def test_native_color_without_flagged_status_is_pending(monkeypatch):
     assert sum("set flag index of targetMessage" in c for c in provider.calls) == 1
 
 
+def test_early_match_followed_by_reversion_is_not_verified(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("providers.mailapp.time.sleep", sleeps.append)
+    matched = H.RESOLVED.replace("0\x1f", "1\x1f", 1)
+    provider = H.prov([H.RESOLVED, "ok", matched, matched, H.RESOLVED])
+    with pytest.raises(ProviderWriteAmbiguous, match="pending"):
+        provider.set_flag_color_ref(H.make_ref(), FlagColor.ORANGE)
+    assert sleeps == [2, 3]
+
+
+def test_research_resume_advances_and_rejects_changed_source(tmp_path):
+    class Provider:
+        def read_evidence_ref(self, ref):
+            return {"headers": f"Message-ID: <{ref.provider_id}@example.invalid>"}
+    ref = H.make_ref().__dict__
+    observation = {"surfaces": [], "messages": [dict(reference={**ref, "provider_id": str(i)},
+                   native_index=5, provider_id=str(i)) for i in range(30)]}
+    output = tmp_path / "research.json"
+    first = research(Provider(), observation, output=output)
+    second = research(Provider(), observation, output=output, resume=first)
+    assert len(second["threads"]) == 30
+    assert second["next_candidate"] == 30
+    assert second["unattempted"] == []
+    assert len({t["seed"]["provider_id"] for t in second["threads"]}) == 30
+    with pytest.raises(ValueError, match="lineage"):
+        research(Provider(), {**observation, "changed": True}, output=output, resume=first)
+
+
 def test_rebind_requires_exact_rfc_and_envelope():
     provider = H.prov(["43", H.RESOLVED])
     live = provider.refresh_reference(H.make_ref(), "Message-ID: <abc@x>")

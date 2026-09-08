@@ -56,6 +56,7 @@ def add_parser(subparsers):
     research_parser.add_argument("--input", required=True)
     research_parser.add_argument("--output", required=True)
     research_parser.add_argument("--thread-limit", type=int, default=25)
+    research_parser.add_argument("--resume", help="Validated prior research artifact for the same observation")
     research_parser.set_defaults(func=cmd_research)
     from core.obligation_refresh import cmd_refresh
     refresh_parser = subparsers.add_parser("mail-observe", help="Refresh Inbox and all flagged surfaces without writes")

@@ -36,6 +36,36 @@ def _provider():
     return OutlookProvider(client_id="test-client-id")
 
 
+@pytest.mark.parametrize("selected", ["first@example.invalid", "second@example.invalid"])
+def test_token_cache_uses_explicit_account(monkeypatch, selected):
+    from types import SimpleNamespace
+    calls = []
+    accounts = [{"username": "first@example.invalid"}, {"username": "second@example.invalid"}]
+    app = SimpleNamespace(get_accounts=lambda: accounts,
+        acquire_token_silent=lambda scopes, account: calls.append(account) or {"access_token": "test"})
+    provider = OutlookProvider(client_id="test", account=selected)
+    monkeypatch.setattr(provider, "_get_msal_app", lambda: app)
+    monkeypatch.setattr(provider, "_save_token_cache", lambda: None)
+    assert provider._acquire_token() == "test"
+    assert calls == [{"username": selected}]
+
+
+def test_wrong_authenticated_account_stops_before_folder_access(monkeypatch):
+    provider = OutlookProvider(client_id="test", account="first@example.invalid")
+    monkeypatch.setattr(provider, "_acquire_token", lambda: "test")
+    monkeypatch.setattr(provider, "_api_get", lambda *a, **k: {"mail": "second@example.invalid"})
+    with pytest.raises(RuntimeError, match="identity"):
+        provider.connect()
+    assert provider._access_token is None
+
+
+def test_graph_session_uses_immutable_ids():
+    pytest.importorskip("requests")
+    provider = _provider()
+    assert provider._get_session().headers["Prefer"] == 'IdType="ImmutableId"'
+    provider.disconnect()
+
+
 def _raise(exc):
     def _inner(*args, **kwargs):
         raise exc

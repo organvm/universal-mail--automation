@@ -497,7 +497,7 @@ class TestScopedWrites:
     def test_post_write_match_returns_true(self):
         h = _ScopedHarness
         matched = h.RESOLVED.replace("0", "1", 1)   # flag index now 1=ORANGE
-        p = h.prov([h.RESOLVED, "ok", matched])
+        p = h.prov([h.RESOLVED, "ok", matched, matched, matched])
         assert p.set_flag_color_ref(h.make_ref(), FlagColor.ORANGE) is True
 
     def test_clear_routes_through_no_flag(self):
@@ -505,7 +505,7 @@ class TestScopedWrites:
         cleared = h.RESOLVED.replace("0\x1f", "-1\x1f", 1)
         cleared = cleared.rsplit("\x1f", 1)[0] + "\x1ffalse"
         assert cleared.startswith("-1")     # guard: replacement actually hit
-        p = h.prov([h.RESOLVED, "ok", cleared])
+        p = h.prov([h.RESOLVED, "ok", cleared, cleared, cleared])
         assert p.clear_flag_ref(h.make_ref()) is True
 
     def test_post_write_evidence_drift_is_ambiguous(self):
@@ -550,7 +550,7 @@ class TestScopedWrites:
     def test_post_write_evidence_intact_and_exact_native_succeeds(self):
         h = _ScopedHarness
         matched = h.RESOLVED.replace("0\x1f", "4\x1f", 1)   # BLUE=4, evidence same
-        p = h.prov([h.RESOLVED, "ok", matched])
+        p = h.prov([h.RESOLVED, "ok", matched, matched, matched])
         assert p.set_flag_color_ref(h.make_ref(), FlagColor.BLUE) is True
 
     def test_bare_id_colored_methods_are_gone(self):

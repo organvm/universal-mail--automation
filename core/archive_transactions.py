@@ -141,9 +141,9 @@ class ArchiveEngine:
                             status = verify_archive(provider=mutation["identity"]["provider"],
                                 expected=MessageIdentity.model_validate(mutation["identity"]),
                                 observed=observed, destination=mutation["destination"])
-                            if status in ("verified", "conflicted"):
-                                row["status"] = status
-                                row["after"] = observed
+                            row["status"] = status
+                            row["after"] = observed
+                            if status == "conflicted":
                                 break
                 except Exception:
                     row["status"] = "uncertain"
@@ -215,8 +215,15 @@ class ArchiveEngine:
             except Exception:
                 status = "uncertain"
             results.append({"id": mutation["id"], "status": status})
-        return {"schema": "uma.archive_verification.v1", "plan_sha256": plan["content_hash"],
-                "results": results, "writes_performed": 0, "replay_authorized": False}
+        verification = {"schema": "uma.archive_verification.v1", "plan_sha256": plan["content_hash"],
+                        "observed_at": datetime.now(timezone.utc).isoformat(),
+                        "results": results, "writes_performed": 0, "replay_authorized": False}
+        verification["content_hash"] = sha256_hex(verification)
+        with AdvisoryFileLock(self.state_dir / "archive.lock"):
+            _atomic_write_private_json(
+                self.state_dir / ("verification-" + verification["content_hash"] + ".json"),
+                verification, prefix=".tmp-archive-verification-")
+        return verification
 
 
 def cmd_archive(args):

@@ -250,11 +250,19 @@ def verify_archive(*, provider: str, expected: MessageIdentity, observed: dict,
         labels = observed.get("label_ids")
         if not isinstance(labels, list) or any(not isinstance(v, str) for v in labels):
             return "uncertain"
+        if "TRASH" in labels or "SPAM" in labels:
+            return "conflicted"
+        if observed.get("in_inbox") is True:
+            return "unchanged"
         return "verified" if "INBOX" not in labels else "unchanged"
     if provider == "icloud":
         members = observed.get("mailboxes")
         if not destination or not isinstance(members, list):
             return "uncertain"
+        if observed.get("in_inbox") is not False:
+            return "uncertain"
+        if any(str(m).casefold() == "inbox" for m in members):
+            return "unchanged"
         return "verified" if destination in members else "uncertain"
     return "unsupported"
 

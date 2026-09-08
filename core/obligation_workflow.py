@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.flag_workflow import sha256_hex
 
 SCHEMA = "uma.obligations.v2"
-POLICY = {"version": "obligation-evidence.1", "fresh_hours": 24,
+POLICY = {"version": "obligation-evidence.2", "fresh_hours": 24,
           "immediate_hours": 24, "max_threads": 25, "messages_per_thread": 20,
           "max_mutations": 25, "run_seconds": 600, "identity_refreshes": 1}
 POLICY_HASH = sha256_hex(POLICY)
@@ -202,7 +202,7 @@ def reconcile(obligations: list[Obligation], *, now: datetime,
         row["verification_status"] = next((s for s in ("conflicted", "uncertain", "unchanged", "not_requested")
                                             if s in statuses), "verified")
         row["archive_eligible"] = (
-            row["lifecycle"] == "non_action" and not row["protected"]
+            row["lifecycle"] in ("non_action", "completed") and not row["protected"]
             and not row["human_override"] and not coverage_gaps
             and not any(m["account"] + ":" + m["provider"] + ":" + m["message_id"] in active
                         for m in row["messages"]))
@@ -255,7 +255,7 @@ def verify_archive(*, provider: str, expected: MessageIdentity, observed: dict,
         if observed.get("in_inbox") is True:
             return "unchanged"
         return "verified" if "INBOX" not in labels else "unchanged"
-    if provider == "icloud":
+    if provider in ("icloud", "outlook"):
         members = observed.get("mailboxes")
         if not destination or not isinstance(members, list):
             return "uncertain"

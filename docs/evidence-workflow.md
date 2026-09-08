@@ -36,7 +36,37 @@ service; no additional scopes are automatically granted.
 
 `flag-candidates` is the explicit compatibility bridge: it binds independent obligation records to exact preserved native mutation ids and suggests target colors for review. It does not rewrite the preserved plan, sign approvals, or bypass the canary gate. Unknown siblings keep REVIEW visible; coverage gaps and overrides block selection readiness.
 
-`archive-workflow plan|apply|verify|reconcile|rollback` exposes the archive contracts. A plan input contains the complete obligation set and `archive_observations`. Observations bind exact identity, current Inbox membership, revision, protection/override checks and server evidence. A canary approval binds the plan and policy hashes, explicit operator selection receipt and 1–3 mutation ids. Production adapters must implement `observe_archive`, `archive_if_unchanged`, and `restore_archive_if_unchanged`; the existing Gmail/iCloud legacy methods do not satisfy that contract and remain blockers. No generic boolean archive fallback exists.
+`archive-workflow observe|plan|apply|verify|reconcile|rollback` uses the native archive
+adapters. Select `--provider` and `--account` explicitly. `--guard-evidence` binds
+reviewed obligations to the persistent Mail.app override store. A production v2
+plan contains fresh coverage evidence and positive preservation observations.
+Canary approval binds the plan, policy, operator selection receipt, and 1–3 exact
+mutation IDs. Native adapters report `applied`, `not_dispatched`, or `ambiguous`;
+they use local writer locks and server readback, without claiming an atomic server
+revision precondition. Verification never repeats a write.
+
+`mail-inventory` resumes all discovered folders with account identity, memberships,
+threading headers, scan boundaries, and page receipts. `mail-corpus` reconstructs
+account-scoped RFC correspondence from complete inventories. Passing that corpus
+to `mail-research` resumes long threads between individual reads. Each unit retains
+the 25-thread and 20-read limits; `--work-units` shares one 600-second ceiling.
+Collected messages and attachments still require obligation and relevance review.
+
+`mail-workflow review-record` records that review against every message receipt and
+attachment disposition in a complete thread. Revisions preserve prior evidence and
+must explicitly supersede it. `archive-coverage` produces coverage from those
+reviews; production archive plans must retain the entire reviewed obligation set.
+Both operations take `--corpus`, `--research`, and `--reviews` private paths.
+
+For Outlook mail-only consent, profile access can be unavailable while mail access
+works. Identity verification then compares the authenticated Inbox with the
+explicit `/users/{account}/mailFolders/inbox` resource using immutable IDs. Different
+mailboxes fail the check; no extra profile permission is requested. See the
+[Graph folder resource](https://learn.microsoft.com/en-us/graph/api/mailfolder-get?view=graph-rest-1.0).
+
+`mail-github-evidence discover` reads completed collections; `resolve` resumes
+authenticated object-specific research. Exact notification provenance survives
+consolidation. An unresolved or failed object cannot establish archive eligibility.
 
 ## Evidence contract and compatibility
 
@@ -58,15 +88,22 @@ Expand **Flagged** in Mail's sidebar. Click a flag name, click it again, and typ
 
 | Native color | Sidebar name | Meaning |
 | --- | --- | --- |
-| Red | 01 NOW | Evidenced consequential deadline requires immediate action |
-| Orange | 02 ACTION | You own the next step |
-| Yellow | 03 WAITING | Correspondence supports another party owning the next step |
-| Green | 04 SCHEDULED | Confirmed future commitment |
-| Blue | 05 REFERENCE | Supports active work |
-| Purple | 06 REVIEW | Evidence or judgment remains unresolved |
-| Gray | 07 LATER | Deliberate deferral with a checkpoint |
+| Red | NOW | Evidenced consequential deadline requires immediate action |
+| Orange | ACTION | You own the next step |
+| Yellow | WAITING | Correspondence supports another party owning the next step |
+| Green | SCHEDULED | Confirmed future commitment |
+| Blue | REFERENCE | Supports active work |
+| Purple | REVIEW | Evidence or judgment remains unresolved |
+| Gray | LATER | Deliberate deferral with a checkpoint |
 
-Apple documents sidebar renaming in its [Mail flag guide](https://support.apple.com/guide/mail/mark-emails-to-revisit-later-mlhlp1052/mac). This documents names, not a promise that Mail will sort them numerically. Native ordering remains an unverified presentation capability. No assistant screen control or preference-file edits are involved.
+Apple documents sidebar renaming in its [Mail flag guide](https://support.apple.com/guide/mail/mark-emails-to-revisit-later-mlhlp1052/mac). The semantic names are now visible in Mail. Actual ordering still needs verification; ordered Favorites of these same views are the fallback.
+
+## Sending boundary
+
+Only the operator literally clicking **Send in Mail.app** authorizes transmission.
+The assistant must never click Send. `config/mail-execution-policy.json` enforces
+this boundary in legacy and headless SMTP entrypoints. Old receipts, `--fire`, and
+armed environment variables cannot override it. Draft preparation remains separate.
 
 ## Validation and policy changes
 

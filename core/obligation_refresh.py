@@ -88,7 +88,17 @@ def shadow_from_observation(observation: dict) -> dict:
 def cmd_refresh(args):
     import json
     from providers.mailapp import MailAppProvider
+    if getattr(args, "provider", None):
+        from core.inventory_cli import cmd_inventory
+        if len(args.account) != 1:
+            print(json.dumps({"status": "blocked", "error": "native inventory manifests require one explicit account"}))
+            return 2
+        args.account = args.account[0]
+        args.page_size = args.limit
+        return cmd_inventory(args)
     try:
+        if not args.shadow:
+            raise ValueError("--shadow is required for legacy Mail.app observations")
         with MailAppProvider() as provider:
             artifact = refresh(provider, accounts=args.account, output=Path(args.output).expanduser(), limit=args.limit)
         shadow = shadow_from_observation(artifact)

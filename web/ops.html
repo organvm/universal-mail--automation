@@ -391,6 +391,11 @@
       </div>
     </section>
     <section class="panel">
+      <h2>Obligations</h2>
+      <button id="loadObligations" type="button">Load private obligations</button>
+      <div id="obligationView" aria-live="polite"></div>
+    </section>
+    <section class="panel">
       <h2>Action Ledger</h2>
       <div id="actionLedger"></div>
       <div class="private-review">
@@ -546,6 +551,24 @@
     const bucketsEl = document.getElementById("buckets");
     const sourceMetaEl = document.getElementById("sourceMeta");
     const tokenEl = document.getElementById("token");
+    document.getElementById("loadObligations").addEventListener("click", async () => {
+      const view = document.getElementById("obligationView");
+      view.textContent = "Loading obligations…";
+      try {
+        const response = await fetch("/v1/ops/obligations", {
+          headers: { Authorization: `Bearer ${tokenEl.value.trim()}` }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Obligations unavailable");
+        view.innerHTML = `<p>${escapeHtml(data.metrics.unresolved)} unresolved · ${escapeHtml(data.metrics.review)} need review · ${escapeHtml(data.metrics.coverage_gaps)} coverage gaps</p>` +
+          data.obligations.map(row => `<article class="sample">
+            <strong>${escapeHtml(row.posture || row.lifecycle)}: ${escapeHtml(row.title)}</strong>
+            <p>Next: ${escapeHtml(row.next_action)} · Owner: ${escapeHtml(row.next_actor)}</p>
+            <p>Evidence checked: ${escapeHtml(row.evidence_observed_at || "Missing")} · Verification: ${escapeHtml(row.verification_status)}</p>
+            ${row.questions.map(q => `<p>${escapeHtml(q.reason)}: ${escapeHtml(q.question)} · ${escapeHtml(q.resolver)} · Check: ${escapeHtml(q.checkpoint)}</p>`).join("")}
+          </article>`).join("");
+      } catch (error) { view.textContent = error.message; }
+    });
 
     const metricDefs = [
       ["escaped_unread", "Escaped Unread", "Unread inbox outside intentional labels"],

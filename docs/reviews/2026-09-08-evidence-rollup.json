@@ -1,0 +1,31 @@
+{
+  "schema": "uma.evidence_rollup.v1",
+  "artifacts": [
+    {
+      "name": "observation.json",
+      "sha256": "023a0367322201be67d4d7dee2be40aabfeb9effc83083635abfe19a1e8d8f8d",
+      "mode": "0o600"
+    },
+    {
+      "name": "research.json",
+      "sha256": "898c6ca3a6e7a95b31d304aceefd7d571a0807eb8e73176627e64da48e22d0fb",
+      "mode": "0o600"
+    },
+    {
+      "name": "reviewed-evidence.json",
+      "sha256": "747fb351bd3daa707a8f785c5fff3de42cc8122da7196ecf9c53985fa9a4bde7",
+      "mode": "0o600"
+    },
+    {
+      "name": "reviewed-shadow.json",
+      "sha256": "74fc008e36c5021c8d8e582af3af92a8373e184a98a0f4c2cdb88928443902a7",
+      "mode": "0o600"
+    },
+    {
+      "name": "benchmark.json",
+      "sha256": "40c3aa584acfd9c18e8647f9500597f4a305fe528dc8a2bacb04531f1420e7df",
+      "mode": "0o600"
+    }
+  ],
+  "mailbox_writes": 0
+}

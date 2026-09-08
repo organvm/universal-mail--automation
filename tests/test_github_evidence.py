@@ -68,3 +68,37 @@ def test_tampered_completed_receipt_cannot_be_skipped(tmp_path):
     path.write_text(json.dumps(evidence))
     with pytest.raises(ValueError):
         resolve_batch([signal()], root=tmp_path, reader=Reader())
+
+
+def test_inventory_discovery_retains_memberships_and_page_receipts(tmp_path):
+    from core.mail_inventory import inventory
+    from core.github_evidence import inventory_signal_messages
+
+    class InventoryProvider:
+        def identity(self):
+            return {"account": "a", "authenticated": True}
+
+        def inventory_surfaces(self):
+            return [{"id": "Inbox"}, {"id": "Archive"}, {"id": "Trash"}]
+
+        def inventory_snapshot(self, surface):
+            return {"frozen": True}
+
+        def inventory_page(self, surface, snapshot, cursor, limit):
+            return {"complete": True, "next_cursor": None, "messages": [{
+                "identity": {"provider": "gmail", "account": "a", "message_id": "1"},
+                "native": {"folder": surface["id"]}, "memberships": [surface["id"]],
+                "retention_class": "junk_trash" if surface["id"] == "Trash" else "retained",
+                "headers": "<owner/repo/pull/42@github.com>"}]}
+
+    manifest = inventory(InventoryProvider(), root=tmp_path)
+    signals = discover_signals(inventory_signal_messages(tmp_path))
+    assert len(signals) == 1
+    notifications = signals[0]["notifications"]
+    assert len(notifications) == 2
+    assert {n["provenance"][0]["memberships"][0] for n in notifications} == {"Inbox", "Archive"}
+    assert all(n["evidence_receipt"] and n["provenance"][0]["inventory_sha256"] == manifest["content_hash"] for n in notifications)
+    receipt = manifest["surfaces"][1]["pages"][0]
+    (tmp_path / receipt["file"]).write_text('{}')
+    with pytest.raises(ValueError):
+        discover_signals(inventory_signal_messages(tmp_path))

@@ -64,9 +64,13 @@ explicit `/users/{account}/mailFolders/inbox` resource using immutable IDs. Diff
 mailboxes fail the check; no extra profile permission is requested. See the
 [Graph folder resource](https://learn.microsoft.com/en-us/graph/api/mailfolder-get?view=graph-rest-1.0).
 
-`mail-github-evidence discover` reads completed collections; `resolve` resumes
-authenticated object-specific research. Exact notification provenance survives
-consolidation. An unresolved or failed object cannot establish archive eligibility.
+`mail-github-evidence discover --research PATH` reads completed collections.
+`discover --inventory PATH` streams exact notification identities from validated
+inventory pages, so unrelated body collection does not delay GitHub intake. Either
+source option can repeat across accounts. Native identity, every folder membership,
+and the source receipt remain attached to each signal. Header discovery alone is
+not complete correspondence coverage. `resolve` resumes authenticated object-specific
+research; unresolved or failed objects cannot establish archive eligibility.
 
 ## Evidence contract and compatibility
 
@@ -96,7 +100,7 @@ Expand **Flagged** in Mail's sidebar. Click a flag name, click it again, and typ
 | Purple | REVIEW | Evidence or judgment remains unresolved |
 | Gray | LATER | Deliberate deferral with a checkpoint |
 
-Apple documents sidebar renaming in its [Mail flag guide](https://support.apple.com/guide/mail/mark-emails-to-revisit-later-mlhlp1052/mac). The semantic names are now visible in Mail. Actual ordering still needs verification; ordered Favorites of these same views are the fallback.
+Apple documents sidebar renaming in its [Mail flag guide](https://support.apple.com/guide/mail/mark-emails-to-revisit-later-mlhlp1052/mac). The semantic names are visible in Mail. Native reordering did not settle into the intended order; the same seven views are now verified in ordered Favorites. The native Flagged group is collapsed to avoid duplicate presentation. Settled counts and presentation evidence are recorded in the redacted rollout receipts, separately from message mutation verification.
 
 ## Sending boundary
 

@@ -144,38 +144,75 @@ def _resolve_batch(signals, *, root: Path, reader=None, limit=25):
         validate(manifest)
         if manifest["signals_sha256"] != source_hash or manifest["authenticated_login"] != profile["login"]:
             raise ValueError("GitHub resolver continuation mismatch")
-        if manifest["next_object"] != len(manifest["results"]) or not 0 <= manifest["next_object"] <= len(signals):
+        if manifest.get("schema") == "uma.github_research.v1":
+            if manifest["next_object"] != len(manifest["results"]):
+                raise ValueError("GitHub resolver cursor mismatch")
+            manifest.update(schema="uma.github_research.v2", scan_cursor=manifest["next_object"], deferred=[])
+            for index, result in enumerate(manifest["results"]):
+                result["index"] = index
+        if manifest.get("schema") != "uma.github_research.v2":
+            raise ValueError("GitHub resolver manifest version mismatch")
+        done = [r["index"] for r in manifest["results"]]
+        done_set = set(done)
+        pending = manifest["deferred"]
+        cursor = manifest["scan_cursor"]
+        if (type(cursor) is not int or not 0 <= cursor <= len(signals)
+                or any(type(i) is not int for i in done + pending)
+                or len(set(done + pending)) != len(done + pending)
+                or set(done + pending) != set(range(cursor))
+                or manifest["next_object"] != next((i for i in range(cursor) if i not in done_set), cursor)):
             raise ValueError("GitHub resolver cursor mismatch")
-        for index, result in enumerate(manifest["results"]):
+        for result in manifest["results"]:
+            index = result["index"]
             if result["file"] != result["sha256"] + ".json" or result["object_id"] != signals[index]["id"]:
                 raise ValueError("GitHub resolver receipt identity mismatch")
             evidence = _json_object_from_path(root / result["file"], "GitHub object receipt")
             validate(evidence)
-            if evidence["content_hash"] != result["sha256"]:
+            if (evidence["content_hash"] != result["sha256"] or evidence["object"] != signals[index]["object"]
+                    or evidence["notifications"] != signals[index]["notifications"] or evidence["status"] != result["status"]):
                 raise ValueError("GitHub resolver receipt lineage mismatch")
     else:
-        manifest = {"schema": "uma.github_research.v1", "signals_sha256": source_hash,
-                    "authenticated_login": profile["login"], "next_object": 0, "results": [], "errors": []}
+        manifest = {"schema": "uma.github_research.v2", "signals_sha256": source_hash,
+                    "authenticated_login": profile["login"], "next_object": 0,
+                    "scan_cursor": 0, "deferred": [], "results": [], "errors": []}
 
     def persist():
+        done = {r["index"] for r in manifest["results"]}
+        manifest["next_object"] = next((i for i in range(manifest["scan_cursor"]) if i not in done), manifest["scan_cursor"])
+        manifest["researched_objects"] = len(done)
+        manifest["unavailable_objects"] = len(manifest["deferred"])
         _atomic_write_private_json(path, seal(manifest), prefix=".tmp-github-research-")
     persist()
     started = time.monotonic()
-    for _ in range(limit):
-        if manifest["next_object"] == len(signals) or time.monotonic() - started >= 480:
+    # A failed object retains its own question and retry checkpoint. It must
+    # not prevent independent repositories from being researched. Once intake
+    # is exhausted, deferred objects rotate through bounded retry units.
+    indices = (list(range(manifest["scan_cursor"], min(len(signals), manifest["scan_cursor"] + limit)))
+               if manifest["scan_cursor"] < len(signals) else manifest["deferred"][:limit])
+    for index in indices:
+        if time.monotonic() - started >= 480:
             break
-        signal = signals[manifest["next_object"]]
+        signal = signals[index]
         try:
             evidence = resolve_signal(signal, reader)
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
-            manifest["errors"].append({"object_id": signal["id"], "type": type(exc).__name__})
+            manifest["errors"].append({"object_id": signal["id"], "type": type(exc).__name__,
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "question": "Can this exact object be read through the authenticated repository, or is additional access or supersession evidence required?",
+                "checkpoint": "next bounded deferred-object retry after remaining intake"})
+            if index in manifest["deferred"]:
+                manifest["deferred"].remove(index)
+            manifest["deferred"].append(index)
+            manifest["scan_cursor"] = max(manifest["scan_cursor"], index + 1)
             persist()
-            break
+            continue
         filename = evidence["content_hash"] + ".json"
         _atomic_write_private_json(root / filename, evidence, prefix=".tmp-github-object-")
-        manifest["results"].append({"object_id": signal["id"], "status": evidence["status"],
+        manifest["results"].append({"index": index, "object_id": signal["id"], "status": evidence["status"],
                                     "file": filename, "sha256": evidence["content_hash"]})
-        manifest["next_object"] += 1
+        if index in manifest["deferred"]:
+            manifest["deferred"].remove(index)
+        manifest["scan_cursor"] = max(manifest["scan_cursor"], index + 1)
         persist()
     return manifest
 
@@ -224,7 +261,8 @@ def cmd_github(args):
             if source.get("schema") != "uma.github_signals.v1":
                 raise ValueError("invalid signal source")
             result = resolve_batch(source["signals"], root=root, limit=args.limit)
-            print(json.dumps({"researched_objects": result["next_object"], "objects": len(source["signals"]),
+            print(json.dumps({"researched_objects": result["researched_objects"], "objects": len(source["signals"]),
+                              "unavailable_objects": result["unavailable_objects"], "intake_cursor": result["scan_cursor"],
                               "writes_performed": 0}))
             return 0 if result["next_object"] == len(source["signals"]) else 20
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired) as exc:

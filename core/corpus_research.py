@@ -127,16 +127,29 @@ def research_corpus(corpus: dict, provider, *, root: Path, thread_limit: int = 2
             validate(state)
             if state.get("schema") != "uma.corpus_research.v1" or state["corpus_sha256"] != corpus["content_hash"]:
                 raise ValueError("research continuation lineage mismatch")
-            for thread in state["threads"]:
-                for receipt in thread["receipts"]:
+            if len(state["threads"]) != len(corpus["threads"]):
+                raise ValueError("research thread coverage mismatch")
+            for thread, source in zip(state["threads"], corpus["threads"]):
+                if (thread["id"] != source["id"] or type(thread["next_message"]) is not int
+                        or not 0 <= thread["next_message"] <= len(source["messages"])
+                        or len(thread["receipts"]) != thread["next_message"]):
+                    raise ValueError("research cursor mismatch")
+                for receipt, message in zip(thread["receipts"], source["messages"]):
+                    if receipt["file"] != "messages/" + receipt["sha256"] + ".json":
+                        raise ValueError("research receipt path mismatch")
                     evidence = _json_object_from_path(root / receipt["file"], "research evidence")
                     validate(evidence)
-                    if evidence["content_hash"] != receipt["sha256"]:
+                    if (evidence["content_hash"] != receipt["sha256"] or evidence["message_id"] != message["id"]
+                            or evidence["provenance"] != message["provenance"]):
                         raise ValueError("research evidence lineage mismatch")
         else:
             state = {"schema": "uma.corpus_research.v1", "corpus_sha256": corpus["content_hash"],
                      "threads": [{"id": t["id"], "next_message": 0, "receipts": [], "errors": []}
                                  for t in corpus["threads"]], "writes_performed": 0, "authority": "evidence_only"}
+        state.setdefault("next_thread", 0)
+        count = len(corpus["threads"])
+        if type(state["next_thread"]) is not int or not 0 <= state["next_thread"] < max(1, count):
+            raise ValueError("research candidate continuation mismatch")
 
         def persist():
             state["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -148,7 +161,9 @@ def research_corpus(corpus: dict, provider, *, root: Path, thread_limit: int = 2
         persist()
         attempted = 0
         read_count = 0
-        for target, thread in zip(state["threads"], corpus["threads"]):
+        order = list(range(state["next_thread"], count)) + list(range(state["next_thread"]))
+        for index in order:
+            target, thread = state["threads"][index], corpus["threads"][index]
             if target["id"] != thread["id"] or not 0 <= target["next_message"] <= len(thread["messages"]):
                 raise ValueError("research cursor mismatch")
             if target["next_message"] == len(thread["messages"]):
@@ -156,6 +171,7 @@ def research_corpus(corpus: dict, provider, *, root: Path, thread_limit: int = 2
             if attempted >= thread_limit or time.monotonic() - started >= ceiling - 30:
                 break
             attempted += 1
+            failed = False
             for _ in range(message_limit):
                 if target["next_message"] == len(thread["messages"]) or time.monotonic() - started >= ceiling - 30:
                     break
@@ -165,6 +181,8 @@ def research_corpus(corpus: dict, provider, *, root: Path, thread_limit: int = 2
                 except (RuntimeError, ValueError, OSError) as exc:
                     target["errors"].append({"message": message["id"], "type": type(exc).__name__,
                                               "at": datetime.now(timezone.utc).isoformat()})
+                    state["next_thread"] = (index + 1) % count
+                    failed = True
                     persist()
                     break
                 evidence.update(schema="uma.corpus_message_evidence.v1", message_id=message["id"],
@@ -175,7 +193,12 @@ def research_corpus(corpus: dict, provider, *, root: Path, thread_limit: int = 2
                 target["receipts"].append({"file": name, "sha256": evidence["content_hash"]})
                 target["next_message"] += 1
                 read_count += 1
+                state["next_thread"] = (index + 1) % count if target["next_message"] == len(thread["messages"]) else index
                 persist()
+            if not failed and target["next_message"] < len(thread["messages"]):
+                # Continue a long thread in the next bounded unit before
+                # sending it behind the entire historical corpus.
+                break
         state["last_unit_reads"] = read_count
         persist()
         return state

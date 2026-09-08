@@ -102,3 +102,26 @@ def test_inventory_discovery_retains_memberships_and_page_receipts(tmp_path):
     (tmp_path / receipt["file"]).write_text('{}')
     with pytest.raises(ValueError):
         discover_signals(inventory_signal_messages(tmp_path))
+
+
+def test_unavailable_object_does_not_hide_other_repositories(tmp_path):
+    objects = discover_signals([{"headers": "<owner/repo/pull/42@github.com> <owner/repo/pull/43@github.com>"}])
+    reader = Reader()
+    original = reader.get
+
+    def unavailable(path, **kwargs):
+        if "/42" in path:
+            raise RuntimeError("unavailable")
+        return original(path.replace("/43", "/42"), **kwargs)
+
+    reader.get = unavailable
+    result = resolve_batch(objects, root=tmp_path, reader=reader)
+    assert result["next_object"] == 0
+    assert result["scan_cursor"] == 2
+    assert result["researched_objects"] == 1
+    assert result["deferred"] == [0]
+    assert result["errors"][0]["question"]
+    reader.get = original
+    result = resolve_batch(objects, root=tmp_path, reader=reader)
+    assert result["next_object"] == 2 and result["deferred"] == []
+    assert {r["index"] for r in result["results"]} == {0, 1}

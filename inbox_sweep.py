@@ -390,7 +390,9 @@ def report(account, inbox_name, rows):
 
 
 def _osa(script, timeout=900):
-    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run([os.path.expanduser("~/.local/bin/domus-agent-host"),
+                        "ensure", "--", "/usr/bin/osascript", "-e", script],
+                       capture_output=True, text=True, timeout=min(timeout, 600))
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 

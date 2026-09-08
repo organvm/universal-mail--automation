@@ -6,11 +6,18 @@ enabling consistent behavior across Gmail, IMAP, Mail.app, and Outlook.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import List, Optional, Iterator, Dict, Any, Tuple, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 from enum import Flag, auto
 
-from core.models import EmailMessage, LabelAction, ProcessingResult
+from core.models import (
+    EmailMessage,
+    LabelAction,
+    LabelActionValidationError,
+    MessageReference,
+    ProcessingResult,
+    FlagColor,
+)
 from core.rules import is_protected_sender
 
 if TYPE_CHECKING:  # avoid any import-time coupling; AuditLog is duck-typed at runtime
@@ -27,12 +34,46 @@ class ProviderCapabilities(Flag):
     NONE = 0
     TRUE_LABELS = auto()          # Supports multiple labels per message (Gmail)
     FOLDERS = auto()              # Uses folders instead of labels (IMAP, Outlook)
-    STAR = auto()                 # Can star/flag messages
+    STAR = auto()                 # Can star/flag messages (boolean)
     ARCHIVE = auto()              # Can archive (remove from inbox without deleting)
     BATCH_OPERATIONS = auto()     # Supports batch API calls
     SEARCH_QUERY = auto()         # Supports server-side search queries
     GMAIL_EXTENSIONS = auto()     # Supports Gmail IMAP extensions (X-GM-LABELS)
     CATEGORIES = auto()           # Supports color categories (Outlook)
+    COLORED_FLAGS = auto()        # Supports 7-color flag index (Mail.app)
+
+
+class ProviderWriteAmbiguous(RuntimeError):
+    """A provider write crossed dispatch but its outcome is not provable.
+
+    Providers raise this only when a mutating request may have reached the
+    backing service (including failures during provider-internal post-write
+    verification).  Callers must conservatively count the operation as a
+    possible write and must not report a zero-write refusal.
+
+    Exceptions raised before dispatch use their ordinary provider-specific
+    type; an explicit ``False`` return continues to mean the provider refused
+    the write before it occurred.
+    """
+
+
+class ProviderNativeStateDrift(RuntimeError):
+    """A scoped provider refused a write before dispatch due to native drift.
+
+    This exception is the compare-and-set refusal boundary.  Providers may
+    raise it only after proving that the live native state does not equal the
+    caller-bound expected state and before issuing the mutation.  Transaction
+    callers can therefore persist a human-override suppression while keeping
+    ``writes_performed`` unchanged.
+    """
+
+    def __init__(self, expected_native: int, observed_native: Optional[int]):
+        self.expected_native = expected_native
+        self.observed_native = observed_native
+        super().__init__(
+            "native flag changed before dispatch "
+            f"(expected {expected_native}, observed {observed_native})"
+        )
 
 
 @dataclass
@@ -269,6 +310,58 @@ class EmailProvider(ABC):
             return False
         return False  # Subclasses override
 
+    def get_flag_color(self, message_id: str) -> FlagColor:
+        """
+        Bare-id colored reads are NOT part of the colored-flag contract.
+
+        Providers capable of colored flags implement the ref-based API
+        (:meth:`get_flag_color_ref`). This stub exists only so non-flag
+        providers fail closed identically to before.
+
+        Raises:
+            NotImplementedError: Always — use get_flag_color_ref(ref).
+        """
+        raise NotImplementedError(
+            "bare-id colored flag read removed; use get_flag_color_ref"
+            "(MessageReference)"
+        )
+
+    # --- Ref-based colored-flag contract (the ONLY supported surface) ------
+
+    def get_flag_color_ref(self, ref: MessageReference) -> FlagColor:
+        """Scoped semantic read for a qualified reference."""
+        if not (self.capabilities & ProviderCapabilities.COLORED_FLAGS):
+            raise NotImplementedError(
+                f"{self.name} does not support COLORED_FLAGS capability"
+            )
+        raise NotImplementedError(
+            "subclass must implement get_flag_color_ref")
+
+    def set_flag_color_ref(self, ref: MessageReference, color: FlagColor) -> bool:
+        """Evidence-verified compare-and-set scoped write.
+
+        ``ref.observed_native_flag`` is the mandatory expected-current value.
+        The provider must compare it and perform the write in one provider
+        request.  True is returned only when post-write re-read confirms the
+        expected target value.
+
+        Raises:
+            ProviderNativeStateDrift: Live native state differed before the
+                write and the provider proved that no mutation was dispatched.
+            ProviderWriteAmbiguous: Dispatch may have crossed the provider's
+                write boundary but the final outcome cannot be proved.
+        """
+        if not (self.capabilities & ProviderCapabilities.COLORED_FLAGS):
+            raise NotImplementedError(
+                f"{self.name} does not support COLORED_FLAGS capability"
+            )
+        raise NotImplementedError(
+            "subclass must implement set_flag_color_ref")
+
+    def clear_flag_ref(self, ref: MessageReference) -> bool:
+        """Evidence-verified scoped unflag (NO_FLAG)."""
+        return self.set_flag_color_ref(ref, FlagColor.NO_FLAG)
+
     @abstractmethod
     def ensure_label_exists(self, label: str) -> str:
         """
@@ -327,17 +420,43 @@ class EmailProvider(ABC):
         result = ProcessingResult()
         is_folder = bool(self.capabilities & ProviderCapabilities.FOLDERS)
         for action in actions:
-            protected = self._drop_if_protected(action)
-            # For providers where apply_label IS a move (Outlook/Mail.app), a
-            # protected sender must not have labels applied either — that would
-            # itself move the message out of the inbox.
-            move_via_label = protected and self.LABEL_IS_MOVE
-            # Observe what ACTUALLY happens, so the audit is a post-hoc witness of
-            # real operations rather than a re-reading of the (gate-mutated) action.
+            # Initialize observation state BEFORE validation so the audit block
+            # below is well-defined even when validation rejects the action.
+            protected = False
             did_leave_inbox = False     # archive() or INBOX-removal actually ran
             did_label_move = False      # a move-on-label apply_label() actually ran
             applied_labels = []
+            # Validate FIRST, before the protected-sender gate can mutate the
+            # action in place. Validation must assess what the caller REQUESTED,
+            # not the gate-normalized representation — otherwise an invalid
+            # archive+flag combination on a protected sender could be silently
+            # normalized into a valid-looking flag-only operation.
             try:
+                action.validate()
+                if action.star and not (
+                    self.capabilities & ProviderCapabilities.STAR
+                ):
+                    raise LabelActionValidationError(
+                        "provider does not support STAR capability"
+                    )
+                if action.category and not (
+                    self.capabilities & ProviderCapabilities.CATEGORIES
+                ):
+                    raise LabelActionValidationError(
+                        "provider does not support CATEGORIES capability"
+                    )
+                if action.clear_flag or action.flag_color is not None:
+                    if not (
+                        self.capabilities & ProviderCapabilities.COLORED_FLAGS
+                    ):
+                        raise LabelActionValidationError(
+                            "provider does not support COLORED_FLAGS capability"
+                        )
+                protected = self._drop_if_protected(action)
+                # For providers where apply_label IS a move (Outlook/Mail.app), a
+                # protected sender must not have labels applied either — that would
+                # itself move the message out of the inbox.
+                move_via_label = protected and self.LABEL_IS_MOVE
                 if not move_via_label:
                     for label in action.add_labels:
                         self.ensure_label_exists(label)
@@ -354,13 +473,33 @@ class EmailProvider(ABC):
                     if self.archive(action.message_id):
                         did_leave_inbox = True
                 if action.star:
-                    self.star(action.message_id, due_date=action.due_date)
+                    if not self.star(action.message_id, due_date=action.due_date):
+                        raise RuntimeError("provider failed to star message")
                 if action.category:
-                    self.apply_category(
+                    if not self.apply_category(
                         action.message_id,
                         action.category,
                         action.category_color or "blue",
-                    )
+                    ):
+                        raise RuntimeError("provider failed to apply category")
+                # Colored flag operations (do not move messages). Capability gate
+                # runs BEFORE any provider call so an unsupported provider never
+                # reaches its (default-raising) flag methods. Dispatch is ALWAYS
+                # through the scoped, evidence-verified ref API — there is no
+                # bare-id colored path anywhere in the codebase.
+                if action.clear_flag or action.flag_color is not None:
+                    if action.message_ref is None:   # belt+braces; validate() also enforces
+                        raise LabelActionValidationError(
+                            "colored flag operation requires a qualified "
+                            "MessageReference"
+                        )
+                    if action.clear_flag:
+                        if not self.clear_flag_ref(action.message_ref):
+                            raise RuntimeError("provider failed to clear flag")
+                    elif action.flag_color is not None:
+                        if not self.set_flag_color_ref(
+                                action.message_ref, action.flag_color):
+                            raise RuntimeError("provider failed to set flag color")
                 result.success_count += 1
             except Exception as e:
                 result.error_count += 1

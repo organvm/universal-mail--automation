@@ -73,6 +73,26 @@ OPS_DELIVERY_LEDGER_ENV = "UMA_MAIL_DELIVERY_LEDGER_PATH"
 router = APIRouter(tags=["ops"])
 
 
+@router.get("/v1/ops/obligations")
+def ops_obligations(request: Request) -> Dict[str, Any]:
+    """Private read-only view of the canonical evidence-derived obligations."""
+    _authorize_private_review(request)
+    from core.flag_workflow import _json_object_from_path, sha256_hex
+    from core.obligation_workflow import SCHEMA
+    raw = os.environ.get("UMA_OBLIGATIONS_PATH", "").strip()
+    if not raw:
+        raise HTTPException(status_code=503, detail="UMA_OBLIGATIONS_PATH is not configured")
+    try:
+        data = _json_object_from_path(Path(raw).expanduser(), "obligations")
+        content_hash = data.pop("content_hash", None)
+        if data.get("schema") != SCHEMA or sha256_hex(data) != content_hash:
+            raise ValueError("invalid obligations artifact")
+        data["content_hash"] = content_hash
+        return data
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="obligations artifact unavailable or invalid") from exc
+
+
 def _configured_report_path() -> Path:
     raw = os.environ.get(OPS_REPORT_ENV, "").strip()
     if not raw:

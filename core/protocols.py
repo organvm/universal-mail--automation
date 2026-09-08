@@ -17,7 +17,7 @@ for the actual reply text — when protocol+precedent are silent — is left to 
 applies and what the human's single next move is.
 
 Design notes:
-- Every obligation is owned by HIM ("yours") — the system surfaces, it never acts.
+- Envelope matches propose research; ownership requires correspondence evidence.
 - `verify` marks a class that is phishing-prone (fraud/credential-change notices): the
   next step leads with "confirm the sender is real" before any action, so a spoof can
   never steer a real action. The raw display name never drives the decision.
@@ -49,7 +49,7 @@ class Obligation:
     priority: int                  # 0–100, by consequence
     next_step: str                 # the single concrete move he makes
     why: str                       # one line: which rung fired and on what signal
-    owner: str = "yours"
+    owner: str = "unknown"
     verify_first: bool = False     # phishing-prone → confirm sender before acting
     requires_reply: bool = False   # is a human/outbound reply owed?
     draft_hint: Optional[str] = None  # seed intent for a draft-only writer (never sent)
@@ -192,10 +192,10 @@ _PROTOCOLS: List[ProtocolDef] = [
                             r"access .*paused|subscription .*paused|update your (payment|"
                             r"information|card)|charge the credit card)"),
         "priority": 82, "verify_first": False, "requires_reply": False,
-        "next_step": "Root cause is the card-0186 hold — resolve THAT first, then update "
-                     "the payment method here. (Cascades to Anthropic / Google Cloud / GitHub.)",
+        "next_step": "Verify the current invoice and payment status in the account; "
+                     "identify the cause from current evidence before deciding the next action.",
         "draft_hint": None,
-        "tags": ["money", "card-0186"],
+        "tags": ["money"],
     },
     {
         "cls": "kyc",
@@ -203,8 +203,8 @@ _PROTOCOLS: List[ProtocolDef] = [
                             r"take action to keep|keep things running|tax (id|info)|"
                             r"w-?9|onboarding|verification (required|needed))"),
         "priority": 78, "verify_first": False, "requires_reply": False,
-        "next_step": "Provide the exact info requested. Note: Stripe KYC is blocked on the "
-                     "dead LLC — prefer the individual monetization rail (Ko-fi/Lemon Squeezy).",
+        "next_step": "Verify the exact outstanding request and entity in the account; "
+                     "record missing evidence before deciding what information is needed.",
         "draft_hint": None,
         "tags": ["money", "product"],
     },
@@ -301,8 +301,8 @@ _PROTOCOLS: List[ProtocolDef] = [
         "match": re.compile(r"(?ix) (legalzoom|registered agent|resign as your|"
                             r"reinstate|annual report|stay compliant)"),
         "priority": 58, "verify_first": False, "requires_reply": False,
-        "next_step": "Decide: renew the registered agent OR let the LLC lapse "
-                     "(the LLCs are dead — lapsing is likely correct, but confirm no live filing).",
+        "next_step": "Verify the entity's current status and filing obligations, then "
+                     "present the renewal decision with its deadline and consequences.",
         "draft_hint": None,
         "tags": ["money", "legal"],
     },
@@ -336,8 +336,8 @@ _PROTOCOLS: List[ProtocolDef] = [
                             r"limit)|daily limit reached|cloud shell|deletion notice|"
                             r"quota|rate limit)"),
         "priority": 32, "verify_first": False, "requires_reply": False,
-        "next_step": "Your own infra signal — the system self-heals. No action unless you "
-                     "want to raise the limit / preserve the resource.",
+        "next_step": "Check current service status and recovery evidence; identify "
+                     "the owner of any unresolved resource or quota issue.",
         "draft_hint": None,
         "tags": ["infra", "self"],
     },

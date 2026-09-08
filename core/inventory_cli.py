@@ -65,7 +65,7 @@ def cmd_inventory(args):
                     break
                 result = research_corpus(corpus, adapter, root=Path(args.output).expanduser(),
                                          thread_limit=args.thread_limit, ceiling=remaining)
-                if result["complete"]:
+                if result["complete"] or result["last_unit_reads"] == 0:
                     break
             if result is None:
                 raise RuntimeError("authentication consumed research work-unit ceiling")

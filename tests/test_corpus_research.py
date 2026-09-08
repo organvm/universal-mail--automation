@@ -4,6 +4,24 @@ from core.corpus_research import research_corpus, extract_evidence
 from core.mail_inventory import seal
 
 
+def test_shared_headers_do_not_collapse_distinct_native_messages(tmp_path, monkeypatch):
+    from core.corpus_research import build_corpus
+    from core.flag_workflow import _atomic_write_private_json
+    rows = [{"identity": {"provider": "icloud", "account": "a", "message_id": uid},
+             "retention_class": "retained", "native": {"uid": uid},
+             "memberships": [folder], "rfc_message_id": "<same@example.invalid>",
+             "headers": "same headers", "server_metadata": "private native response"}
+            for uid, folder in (("1", "Inbox"), ("2", "Archive"), ("1", "Inbox"))]
+    _atomic_write_private_json(tmp_path / "manifest.json", seal({"identity": "a", "complete": True}), prefix=".tmp-")
+    monkeypatch.setattr("core.corpus_research.iter_messages", lambda root: iter(rows))
+    result = build_corpus([tmp_path], output=tmp_path / "corpus.json")
+    assert len(result["threads"]) == 1
+    messages = result["threads"][0]["messages"]
+    assert len(messages) == 2
+    assert sorted(len(m["provenance"]) for m in messages) == [1, 2]
+    assert all("headers" not in m["message"] and "server_metadata" not in m["message"] for m in messages)
+
+
 def corpus(count=45):
     return seal({"schema": "uma.research_corpus.v1", "threads": [{"id": "thread", "messages": [
         {"id": str(i), "provenance": [{"identity": {"account": "a"}}]} for i in range(count)]}]})

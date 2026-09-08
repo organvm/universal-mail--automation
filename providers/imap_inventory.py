@@ -169,12 +169,27 @@ class IMAPInventory:
         raw = bodies[0]
         uids = re.findall(rb"\bUID (\d+)\b", metadata)
         size = re.search(rb"RFC822.SIZE (\d+)", metadata)
-        if uids != [native["uid"].encode()] or size is None or len(raw) != int(size[1]):
+        if uids != [native["uid"].encode()] or size is None:
             raise RuntimeError("research message incomplete or oversized")
         if self.gmail:
             mids = re.findall(rb"X-GM-MSGID (\d+)", metadata)
             if mids != [identity["message_id"].encode()]:
                 raise ValueError("Gmail research identity changed")
+        if len(raw) != int(size[1]):
+            # Gmail can report the stored size while returning MIME with
+            # different line endings. Prove EOF at the returned octet offset;
+            # neither a size discrepancy nor a short literal proves completion.
+            if not self.gmail:
+                raise RuntimeError("research message incomplete or oversized")
+            status, tail = self.connection.uid("FETCH", native["uid"],
+                f"(UID X-GM-MSGID BODY.PEEK[]<{len(raw)}.1>)")
+            chunks = [d for d in tail or [] if isinstance(d, tuple)]
+            tail_meta = b" ".join(d[0] if isinstance(d, tuple) else d for d in tail or [] if isinstance(d, (tuple, bytes)))
+            if (status != "OK" or len(chunks) != 1 or chunks[0][1] != b""
+                    or f"BODY[]<{len(raw)}>".encode() not in chunks[0][0]
+                    or re.findall(rb"\bUID (\d+)\b", tail_meta) != [native["uid"].encode()]
+                    or re.findall(rb"X-GM-MSGID (\d+)", tail_meta) != [identity["message_id"].encode()]):
+                raise RuntimeError("research message incomplete or oversized")
         header, sep, _ = raw.partition(b"\r\n\r\n")
         if not sep:
             raise ValueError("RFC header boundary missing")

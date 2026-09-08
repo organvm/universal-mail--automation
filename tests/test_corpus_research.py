@@ -72,3 +72,17 @@ def test_attachment_provenance_remains_unresolved():
     assert result["attachments"][0]["review_status"] == "requires_relevance_review"
     assert result["bodies"][0]["text"] == "Please review."
     assert seal(result)["content_hash"]
+
+
+def test_failed_candidates_rotate_without_losing_their_message_checkpoint(tmp_path):
+    source = seal({"schema": "uma.research_corpus.v1", "threads": [
+        {"id": str(i), "messages": [{"id": str(i), "provenance": []}]} for i in range(3)]})
+    provider = Provider()
+    provider.fail = "0"
+    first = research_corpus(source, provider, root=tmp_path, thread_limit=1)
+    assert first["next_thread"] == 1 and first["threads"][0]["next_message"] == 0
+    second = research_corpus(source, provider, root=tmp_path, thread_limit=1)
+    assert provider.reads == ["1"] and second["next_thread"] == 2
+    provider.fail = None
+    assert research_corpus(source, provider, root=tmp_path)["complete"]
+    assert provider.reads == ["1", "2", "0"]

@@ -115,7 +115,8 @@ def test_complete_receipt_cannot_omit_a_native_snapshot_uid(tmp_path):
 
 
 @pytest.mark.parametrize("reversed_literals", [False, True])
-def test_gmail_full_read_binds_differently_folded_headers_in_same_fetch(reversed_literals):
+@pytest.mark.parametrize("size_delta,tail_payload", [(0, None), (-3, b""), (-3, b"x"), (3, b"")])
+def test_gmail_full_read_binds_differently_folded_headers_in_same_fetch(reversed_literals, size_delta, tail_payload):
     from core.flag_workflow import sha256_hex
     headers = b"Subject: a long subject\r\nMessage-ID: <one@example.invalid>\r\n\r\n"
     raw = b"Subject: a long\r\n subject\r\nMessage-ID: <one@example.invalid>\r\n\r\nContent"
@@ -131,18 +132,25 @@ def test_gmail_full_read_binds_differently_folded_headers_in_same_fetch(reversed
             return name, [b"123"]
 
         def uid(self, command, uid, query):
+            if "BODY.PEEK[HEADER]" not in query:
+                assert query == f"(UID X-GM-MSGID BODY.PEEK[]<{len(raw)}.1>)"
+                return "OK", [(f"1 (UID 1 X-GM-MSGID 42 BODY[]<{len(raw)}>".encode(), tail_payload), b")"]
             assert "BODY.PEEK[HEADER]" in query and "BODY.PEEK[]" in query
             parts = [(b"BODY[HEADER]", headers), (b"BODY[]<0>", raw)]
             if reversed_literals:
                 parts.reverse()
             meta, payload = parts[0]
-            parts[0] = (b"1 (UID 1 RFC822.SIZE " + str(len(raw)).encode() + b" " + meta, payload)
+            parts[0] = (b"1 (UID 1 RFC822.SIZE " + str(len(raw) + size_delta).encode() + b" " + meta, payload)
             return "OK", parts + [b" X-GM-MSGID 42)"]
 
     identity = {"account": "a", "provider": "gmail", "message_id": "42",
                 "evidence_digest": sha256_hex({"headers": headers.decode()})}
     item = {"provenance": [{"identity": identity, "native": {"mailbox": "Inbox", "uid": "1", "uidvalidity": "123"}}]}
     adapter = IMAPInventory(Connection(), account="a", provider="gmail", host="imap.gmail.com")
+    if tail_payload == b"x":
+        with pytest.raises(RuntimeError, match="incomplete"):
+            adapter.read_corpus_message(item)
+        return
     result = adapter.read_corpus_message(item)
     assert result["complete"] and result["native_headers_sha256"] == identity["evidence_digest"]
     assert result["header_representation"] == "imap_header_same_fetch"

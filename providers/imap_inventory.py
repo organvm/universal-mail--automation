@@ -156,25 +156,38 @@ class IMAPInventory:
         if self._select({"id": native["mailbox"]}) != native["uidvalidity"]:
             raise RuntimeError("research UIDVALIDITY changed")
         extra = " X-GM-MSGID" if self.gmail else ""
+        header_request = " BODY.PEEK[HEADER]" if self.gmail else ""
         status, data = self.connection.uid("FETCH", native["uid"],
-            "(UID RFC822.SIZE BODY.PEEK[]<0.10485760>" + extra + ")")
+            "(UID RFC822.SIZE BODY.PEEK[]<0.10485760>" + header_request + extra + ")")
         literals = [d for d in data or [] if isinstance(d, tuple)]
-        if status != "OK" or len(literals) != 1:
+        if status != "OK" or len(literals) != (2 if self.gmail else 1):
             raise RuntimeError("research exact message unavailable")
-        metadata, raw = literals[0]
-        uid = re.search(rb"\bUID (\d+)\b", metadata)
+        metadata = b" ".join(d[0] if isinstance(d, tuple) else d for d in data if isinstance(d, (tuple, bytes)))
+        bodies = [payload for meta, payload in literals if b"BODY[]" in meta]
+        if len(bodies) != 1:
+            raise RuntimeError("research full-message literal missing or duplicated")
+        raw = bodies[0]
+        uids = re.findall(rb"\bUID (\d+)\b", metadata)
         size = re.search(rb"RFC822.SIZE (\d+)", metadata)
-        if uid is None or uid[1].decode() != native["uid"] or size is None or len(raw) != int(size[1]):
+        if uids != [native["uid"].encode()] or size is None or len(raw) != int(size[1]):
             raise RuntimeError("research message incomplete or oversized")
         if self.gmail:
-            mid = re.search(rb"X-GM-MSGID (\d+)", metadata)
-            if mid is None or mid[1].decode() != identity["message_id"]:
+            mids = re.findall(rb"X-GM-MSGID (\d+)", metadata)
+            if mids != [identity["message_id"].encode()]:
                 raise ValueError("Gmail research identity changed")
         header, sep, _ = raw.partition(b"\r\n\r\n")
         if not sep:
             raise ValueError("RFC header boundary missing")
-        digest = sha256_hex({"headers": (header + sep).decode("utf-8", errors="replace")})
+        # Gmail folds BODY[HEADER] differently from BODY[]. Bind the exact
+        # inventory representation and the full MIME to the SAME UID/X-GM-MSGID
+        # FETCH response; never normalize away changed header content.
+        headers = [payload for meta, payload in literals if b"BODY[HEADER]" in meta] if self.gmail else [header + sep]
+        if len(headers) != 1:
+            raise RuntimeError("research header literal missing or duplicated")
+        digest = sha256_hex({"headers": headers[0].decode("utf-8", errors="replace")})
         if digest != identity["evidence_digest"]:
             raise ValueError("research header evidence changed")
         return {**extract_evidence(raw), "raw_rfc822_base64": base64.b64encode(raw).decode(),
+                "native_headers_sha256": digest,
+                "header_representation": "imap_header_same_fetch" if self.gmail else "raw_mime",
                 "raw_sha256": __import__("hashlib").sha256(raw).hexdigest(), "complete": True}

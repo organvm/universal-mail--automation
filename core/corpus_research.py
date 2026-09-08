@@ -40,12 +40,14 @@ def build_corpus(inventory_roots: list[Path], *, output: Path):
                 continue
             identity = message["identity"]
             scope = sha256_hex({"provider": identity["provider"], "account": identity["account"]})
-            # IMAP folders may have distinct UIDs for one RFC message; preserve
-            # provenance but merge only identical RFC header evidence in account.
-            key = sha256_hex({"scope": scope, "rfc": message["rfc_message_id"],
-                              "evidence": identity["evidence_digest"]}) if message["rfc_message_id"] else sha256_hex(identity)
+            # Only native identity establishes duplicate memberships. Different
+            # messages can share RFC headers while carrying different bodies.
+            key = sha256_hex(identity)
             if key not in messages:
-                messages[key] = {"id": key, "message": message, "provenance": []}
+                # Full headers and server responses stay in their inventory
+                # receipts rather than being duplicated into the working index.
+                projected = {k: v for k, v in message.items() if k not in ("headers", "server_metadata")}
+                messages[key] = {"id": key, "message": projected, "provenance": []}
             messages[key]["provenance"].append({"identity": identity, "native": message["native"],
                                                  "memberships": message["memberships"]})
             anchors = re.findall(r"<[^<>\s]+>", " ".join(message.get(k, "")
@@ -145,6 +147,7 @@ def research_corpus(corpus: dict, provider, *, root: Path, thread_limit: int = 2
 
         persist()
         attempted = 0
+        read_count = 0
         for target, thread in zip(state["threads"], corpus["threads"]):
             if target["id"] != thread["id"] or not 0 <= target["next_message"] <= len(thread["messages"]):
                 raise ValueError("research cursor mismatch")
@@ -171,5 +174,8 @@ def research_corpus(corpus: dict, provider, *, root: Path, thread_limit: int = 2
                 _atomic_write_private_json(root / name, evidence, prefix=".tmp-research-message-")
                 target["receipts"].append({"file": name, "sha256": evidence["content_hash"]})
                 target["next_message"] += 1
+                read_count += 1
                 persist()
+        state["last_unit_reads"] = read_count
+        persist()
         return state

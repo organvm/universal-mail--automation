@@ -22,6 +22,40 @@ def validate(value: dict) -> None:
         raise ValueError("inventory manifest hash mismatch")
 
 
+def validated_pages(root: Path, manifest: dict, state: dict):
+    """Verify page lineage, continuation, and complete native UID coverage."""
+    cursor, finished, uids = None, False, []
+    for receipt in state["pages"]:
+        if receipt["file"] != "pages/" + receipt["sha256"] + ".json":
+            raise ValueError("inventory receipt path mismatch")
+        page = _json_object_from_path(root / receipt["file"], "inventory page")
+        validate(page)
+        if (page["content_hash"] != receipt["sha256"] or page.get("schema") != "uma.mail_inventory_page.v1"
+                or page["identity"] != manifest["identity"] or page["surface"] != state["surface"]
+                or page["snapshot_sha256"] != sha256_hex(state["snapshot"])
+                or page["cursor"] != cursor or finished or len(page["messages"]) != receipt["messages"]):
+            raise ValueError("inventory page lineage mismatch")
+        if type(page["complete"]) is not bool or (not page["complete"] and page.get("next_cursor") in (None, cursor)):
+            raise ValueError("inventory page continuation mismatch")
+        if page["complete"] and page.get("next_cursor") is not None:
+            raise ValueError("completed inventory page retains continuation")
+        if "uids" in state["snapshot"]:
+            selected = [message["native"]["uid"] for message in page["messages"]]
+            offset = len(uids)
+            if sorted(selected, key=int) != state["snapshot"]["uids"][offset:offset + len(selected)]:
+                raise ValueError("inventory UID snapshot coverage mismatch")
+            if any(message["native"]["uidvalidity"] != state["snapshot"]["uidvalidity"] or
+                   message["native"]["mailbox"] != state["surface"]["id"] for message in page["messages"]):
+                raise ValueError("inventory native mailbox identity mismatch")
+            uids.extend(sorted(selected, key=int))
+        cursor, finished = page.get("next_cursor"), page["complete"]
+        yield page
+    if cursor != state["cursor"] or finished != (state["status"] == "complete"):
+        raise ValueError("inventory manifest continuation mismatch")
+    if finished and "uids" in state["snapshot"] and uids != state["snapshot"]["uids"]:
+        raise ValueError("complete inventory omits native snapshot messages")
+
+
 def inventory(provider, *, root: Path, max_pages: int = 25, page_size: int = 100,
               ceiling: int = 600) -> dict:
     """Resume one account, retaining exact provider boundaries and every membership.
@@ -49,11 +83,8 @@ def inventory(provider, *, root: Path, max_pages: int = 25, page_size: int = 100
                 raise ValueError("inventory account lineage mismatch")
             # Validate existing page receipts before trusting the continuation.
             for surface in manifest["surfaces"]:
-                for receipt in surface["pages"]:
-                    page = _json_object_from_path(root / receipt["file"], "inventory page")
-                    validate(page)
-                    if page["content_hash"] != receipt["sha256"]:
-                        raise ValueError("inventory page lineage mismatch")
+                for _ in validated_pages(root, manifest, surface):
+                    pass
         else:
             manifest = {"schema": SCHEMA, "identity": identity,
                         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -123,9 +154,5 @@ def iter_messages(root: Path):
     manifest = _json_object_from_path(root / "manifest.json", "inventory manifest")
     validate(manifest)
     for state in manifest["surfaces"]:
-        for receipt in state["pages"]:
-            page = _json_object_from_path(root / receipt["file"], "inventory page")
-            validate(page)
-            if page["content_hash"] != receipt["sha256"]:
-                raise ValueError("inventory page lineage mismatch")
+        for page in validated_pages(root, manifest, state):
             yield from page["messages"]

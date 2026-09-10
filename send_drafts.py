@@ -200,6 +200,10 @@ def _attach(msg: EmailMessage, paths) -> None:
 
 
 def send_reply(to_addr: str, subject: str, body: str, creds: tuple[str, str], attachments=None) -> bool:
+    from core.send_policy import automated_send_allowed
+    if not automated_send_allowed():
+        print("send_drafts: manual Mail.app Send required; no SMTP connection opened")
+        return False
     user, pw = creds
     msg = EmailMessage()
     msg["From"] = user
@@ -339,10 +343,11 @@ def fire_one(args, tiers: dict | None, sent_state: set) -> int:
         print(f"send_drafts: fire — already sent (idempotent), skipping: {to_addr}")
         return 0
 
-    armed = args.fire or os.environ.get("LIMEN_MAIL_SEND") == "1"
+    from core.send_policy import automated_send_allowed
+    armed = automated_send_allowed() and (args.fire or os.environ.get("LIMEN_MAIL_SEND") == "1")
     if not armed:
         print(f"send_drafts: WOULD FIRE [{tier}] → {to_addr}  (re: {subj[:60]!r}) "
-              f"+{len(ok)} attachment(s)   [add --fire to transmit]")
+              f"+{len(ok)} attachment(s)   [you must click Send in Mail.app]")
         return 0
 
     creds = _smtp_creds()
@@ -376,7 +381,7 @@ def main(argv=None) -> int:
     ap.add_argument("--attach", action="append", default=[], metavar="PATH",
                     help="attachment path for the keyed fire (repeatable; e.g. a PDF)")
     ap.add_argument("--fire", action="store_true",
-                    help="actually transmit the single keyed send (else dry-run) — the explicit key-turn")
+                    help="legacy option; cannot override the requirement to click Send in Mail.app")
     args = ap.parse_args(argv)
 
     tiers = load_tiers()
@@ -386,7 +391,8 @@ def main(argv=None) -> int:
     if args.fire_obligation or args.fire_to:
         return fire_one(args, tiers, _load_sent())
 
-    armed = os.environ.get("LIMEN_MAIL_SEND") == "1" and not args.dry_run
+    from core.send_policy import automated_send_allowed
+    armed = automated_send_allowed() and os.environ.get("LIMEN_MAIL_SEND") == "1" and not args.dry_run
     if tiers is None:
         print("send_drafts: no tier registry (mail-tiers.yaml) — everything holds; sending nothing")
 

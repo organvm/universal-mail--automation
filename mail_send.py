@@ -356,6 +356,10 @@ def _smtp_send(
     failure exit invites duplicate retries.  This implementation performs every
     RCPT command first and issues RSET without DATA if even one address is refused.
     """
+    from core.send_policy import automated_send_allowed
+    if not automated_send_allowed():
+        print("mail-send: only the human clicking Send in Mail.app may send", file=sys.stderr)
+        return False
     user, pw = creds
     wire = msg
     if "Bcc" in msg:  # never transmit the Bcc header itself
@@ -439,6 +443,10 @@ def send_and_verify(
     effect_context: dict[str, str] | None = None,
 ) -> int:
     """Claim a one-shot attempt, send, then verify server-side custody."""
+    from core.send_policy import automated_send_allowed
+    if not automated_send_allowed():
+        print("mail-send: you must click Send in Mail.app; no attempt claimed", file=sys.stderr)
+        return EXIT_FAIL_CLOSED
     try:
         binding = authorization_binding(
             msg,

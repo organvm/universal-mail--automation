@@ -1,0 +1,98 @@
+{
+  "schema": "uma.redacted_rollout_progress.v1",
+  "observed_at": "2026-09-08T23:51:38.799948+00:00",
+  "rollout_status": "in_progress",
+  "accounts": [
+    {
+      "account_alias": "gmail",
+      "inventory_complete": true,
+      "discovered_surfaces": 139,
+      "membership_records": 255437,
+      "inventory_receipt_sha256": "7b51998fb39f98c21642a08f62d163937d4e84eecddfd6f6fe6d1ac1606f9918",
+      "corpus_collected_threads": 269,
+      "corpus_collected_messages": 401,
+      "corpus_collection_complete": false,
+      "corpus_reviewed_threads": 0
+    },
+    {
+      "account_alias": "icloud",
+      "inventory_complete": true,
+      "discovered_surfaces": 26,
+      "membership_records": 779,
+      "inventory_receipt_sha256": "dd9f51febb96764b646b4d9c1a560a9b467c97e3a523d7193eca7deccec3cee4",
+      "corpus_collected_threads": 736,
+      "corpus_collected_messages": 779,
+      "corpus_collection_complete": true,
+      "corpus_reviewed_threads": 0
+    },
+    {
+      "account_alias": "outlook-dotted",
+      "inventory_complete": true,
+      "discovered_surfaces": 12,
+      "membership_records": 38,
+      "inventory_receipt_sha256": "b3fdc7370dc188bdcb9f050913714f249f325113fbb7e1c32349804735a74755",
+      "corpus_collected_threads": 38,
+      "corpus_collected_messages": 38,
+      "corpus_collection_complete": true,
+      "corpus_reviewed_threads": 13
+    },
+    {
+      "account_alias": "outlook-undotted",
+      "inventory_complete": true,
+      "discovered_surfaces": 12,
+      "membership_records": 44,
+      "inventory_receipt_sha256": "1e155ddf187a37f4998571aaa84b794db2690cda4af8a2fc561669426476bd89",
+      "corpus_collected_threads": 44,
+      "corpus_collected_messages": 44,
+      "corpus_collection_complete": true,
+      "corpus_reviewed_threads": 0
+    }
+  ],
+  "gmail_original_gaps_resolved": 4,
+  "github": {
+    "discovered_objects": 14746,
+    "researched_objects": 30,
+    "resolved_object_evidence": 28,
+    "unresolved_object_evidence": 2,
+    "unavailable_objects": 14,
+    "intake_cursor": 44,
+    "failed_objects_preserved_for_retry": true,
+    "archive_authority": false
+  },
+  "presentation": {
+    "semantic_names_visible": true,
+    "ordered_favorites_verified": true,
+    "native_group_collapsed": true,
+    "order": [
+      "NOW",
+      "ACTION",
+      "WAITING",
+      "SCHEDULED",
+      "REFERENCE",
+      "REVIEW",
+      "LATER"
+    ],
+    "visible_counts": [
+      3,
+      23,
+      9,
+      1,
+      14,
+      162,
+      3
+    ],
+    "visible_flagged_total": 215
+  },
+  "rollout": {
+    "canaries_approved": 0,
+    "message_flag_mutations": 0,
+    "archive_mutations": 0,
+    "verified_mailbox_mutations": 0,
+    "maintenance_migrated": false,
+    "legacy_candidate_to_corpus_reconciliation_verified": false
+  },
+  "send_authority": "operator_click_in_mailapp_only",
+  "automated_sends": 0,
+  "scoped_tests_passed": 189,
+  "private_evidence_tracked": false
+}

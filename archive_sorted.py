@@ -11,10 +11,7 @@ closed) BEFORE the INBOX-removing batchModify. Never archive by label alone.
 
 import logging
 
-from googleapiclient.errors import HttpError
-
 import gmail_auth
-from core.rules import is_protected_sender
 
 # Setup
 LOG_FILE = "archive_sorted.log"
@@ -80,54 +77,29 @@ def senders_for(service, ids):
     return out
 
 
-def archive_loop():
+def archive_loop(*, dispatch=None, limit=25):
+    """Discover category members for research; approved archive plans retain authority."""
+    from pathlib import Path
+    from core.maintenance import dispatch_approved, intake
     service = get_service()
+    account = service.users().getProfile(userId="me").execute()["emailAddress"]
+    # Categories are intake filters only. Current obligation evidence decides disposition.
+    query = "in:inbox {" + " ".join("label:" + category for category in ARCHIVE_CATEGORIES) + "}"
+    results = service.users().messages().list(userId="me", q=query, maxResults=min(limit, 500)).execute()
+    rows = [{"id": item["id"], "requested_operation": "archive_review"}
+            for item in results.get("messages", [])]
+    receipt = intake(source="archive_sorted", account=account, provider="gmail", mailbox="INBOX", rows=rows)
+    if dispatch:
+        receipt["dispatch"] = dispatch_approved(Path(dispatch))
+    logger.info("Archive observations queued=%s; mailbox writes require an approved evidence plan", len(rows))
+    return receipt
 
-    for category in ARCHIVE_CATEGORIES:
-        logger.info(f"--- Archiving {category} ---")
-
-        # Query: Has label X AND is in Inbox
-        query = f"label:{category} label:INBOX"
-
-        while True:
-            try:
-                results = service.users().messages().list(
-                    userId='me', q=query, maxResults=1000
-                ).execute()
-
-                messages = results.get('messages', [])
-                if not messages:
-                    logger.info(f"   {category}: Clean.")
-                    break
-
-                ids = [m['id'] for m in messages]
-
-                # PROTECTED-SENDER GATE: never archive by label alone — verify the
-                # From of every candidate and drop protected senders (fail closed).
-                senders = senders_for(service, ids)
-                archivable = [i for i in ids if not is_protected_sender(senders.get(i, ""))]
-                skipped = len(ids) - len(archivable)
-                if skipped:
-                    logger.info(f"   {category}: {skipped} protected sender(s) skipped.")
-                if not archivable:
-                    if len(ids) < 1000:
-                        break
-                    continue
-
-                body = {
-                    "ids": archivable,
-                    "removeLabelIds": ['INBOX']
-                }
-
-                service.users().messages().batchModify(userId='me', body=body).execute()
-                logger.info(f"   Archived {len(archivable)} messages...")
-
-                # If we processed a full page, loop again to catch more (pagination via fresh query)
-                if len(ids) < 1000:
-                    break
-            except HttpError as e:
-                logger.warning(f"API Error: {e}")
-                break
 
 if __name__ == "__main__":
-    archive_loop()
+    import argparse
+    import json
+    parser = argparse.ArgumentParser(description="Category-filtered archive research intake")
+    parser.add_argument("--dispatch", help="exact approved canonical transaction envelope")
+    parser.add_argument("--limit", type=int, default=25)
+    args = parser.parse_args()
+    print(json.dumps(archive_loop(dispatch=args.dispatch, limit=args.limit)))

@@ -979,3 +979,6 @@ MIT License. See [LICENSE](LICENSE) for details.
 **[@4444j99](https://github.com/4444j99)**
 
 Part of the [ORGAN-III: Ergon](https://github.com/organvm-iii-ergon) organization — Commerce, SaaS, and productivity tooling.
+# Evidence-driven private workflow
+
+The [evidence workflow guide](docs/evidence-workflow.md) documents account-scoped observations, independent obligations, private ops views, transaction verification and explicit rollout blockers. The [implementation receipt](docs/reviews/2026-09-08-evidence-workflow.md) distinguishes offline validation from live mailbox changes.

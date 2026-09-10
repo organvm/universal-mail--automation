@@ -181,6 +181,10 @@ def _isolated_effectors(monkeypatch, tmp_path):
     _FakeSMTP.mail_options = []
     _FakeSMTP.supports_smtputf8 = True
     monkeypatch.setattr(mail_send.smtplib, "SMTP_SSL", _FakeSMTP)
+    # Retained protocol/authorization mechanics are tested against fake transport.
+    # Production policy remains manual-only; test_manual_send_policy tests it
+    # without this isolated simulation and forbids any SMTP connection.
+    monkeypatch.setattr("core.send_policy.automated_send_allowed", lambda: True)
     monkeypatch.setattr(
         mail_send, "DEFAULT_CREDENTIAL_FILE", str(tmp_path / "absent-credentials.env")
     )

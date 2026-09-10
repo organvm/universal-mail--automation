@@ -295,3 +295,37 @@ def test_inbox_sweep_omits_reply_to_when_absent():
     )
     rows = classify_inbox(_FakeProvider([msg]), "INBOX", limit=10)
     assert "reply_to" not in rows[0]
+
+
+def test_inbox_sweep_captures_snippet_into_row():
+    msg = EmailMessage(
+        id="3", sender="Recruiter <recruiter@example.com>",
+        subject="Your background and opening with client",
+        snippet="We have an exciting Python developer contract engagement.",
+    )
+    rows = classify_inbox(_FakeProvider([msg]), "INBOX", limit=10)
+    assert rows[0]["snippet"] == "We have an exciting Python developer contract engagement."
+
+
+def test_calendar_interview_and_needed_seeking_classify_hire():
+    # Calendar invite interviews and Needed:/Seeking: recruiter subjects
+    cases = [
+        ("recruiter@ashby.io", "Chat with Acme Corp (calendar invitation.ics)"),
+        ("recruiter@company.com", "Interview: Senior Systems Engineer"),
+        ("headhunter@agency.com", "Needed: Lead Python Developer"),
+        ("talent@firm.com", "Seeking: Staff Backend Engineer"),
+    ]
+    for sender, subject in cases:
+        ob = derive(sender, subject)
+        assert ob.cls == "inbound-lead-hire", f"Failed for {sender} / {subject}"
+
+
+def test_organic_recruiter_lead_with_neutral_subject_classifies_via_snippet():
+    # Live issue #177 regression test: neutral subject, recruiting tokens in snippet/body
+    ob = derive(
+        "Recruiter <recruiter@agency.com>",
+        "Your background and a Python Developer opening with our client",
+        snippet="We are sourcing for a senior contract-to-hire engagement role.",
+    )
+    assert ob.cls == "inbound-lead-hire"
+

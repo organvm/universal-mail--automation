@@ -146,6 +146,9 @@ def test_classify_attachments_splits_ok_oversized_missing(tmp_path):
 
 
 def test_send_reply_attaches_pdf(tmp_path, monkeypatch):
+    # Exercise retained transport mechanics only against the fake SMTP below.
+    # The live manual-Send boundary is covered in test_manual_send_policy.py.
+    monkeypatch.setattr("core.send_policy.automated_send_allowed", lambda: True)
     pdf = tmp_path / "brief.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")
     monkeypatch.setattr(send_drafts.smtplib, "SMTP_SSL", _FakeSMTP)
@@ -168,6 +171,7 @@ def test_fire_hold_refused_in_safe_only(tmp_path, monkeypatch):
 
 
 def test_fire_hold_sent_in_keyed_all_is_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.send_policy.automated_send_allowed", lambda: True)
     monkeypatch.setenv("LIMEN_MAIL_HOLD_SEND", "keyed_all")
     monkeypatch.setattr(send_drafts, "load_tiers", lambda: TIERS)
     monkeypatch.setattr(send_drafts, "_SENT_STATE", str(tmp_path / "sent.json"))

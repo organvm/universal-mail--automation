@@ -84,7 +84,7 @@ ALL_MAIL = "[Gmail]/All Mail"
 DRAFTS = os.environ.get("LIMEN_MAIL_DRAFTS_MAILBOX", "[Gmail]/Drafts")
 SENT = os.environ.get("LIMEN_MAIL_SENT_MAILBOX", "[Gmail]/Sent Mail")
 TRASH = "[Gmail]/Trash"
-HEADER_SCAN_WINDOW = 100  # newest N messages scanned per mailbox for a match
+HEADER_SCAN_WINDOW = 1000  # newest N messages scanned per mailbox for a match
 DEFAULT_CREDENTIAL_FILE = "~/.config/mail_automation/credentials.env"
 DEFAULT_AUTHORIZATION_KEY_FILE = "/etc/universal-mail-automation/mail-send-authorization.pub"
 DEFAULT_ATTEMPT_STORE = "~/.local/state/universal-mail-automation/mail-send-attempts"
@@ -357,6 +357,10 @@ def _smtp_send(
     failure exit invites duplicate retries.  This implementation performs every
     RCPT command first and issues RSET without DATA if even one address is refused.
     """
+    from core.send_policy import automated_send_allowed
+    if not automated_send_allowed():
+        print("mail-send: only the human clicking Send in Mail.app may send", file=sys.stderr)
+        return False
     user, pw = creds
     wire = msg
     if "Bcc" in msg:  # never transmit the Bcc header itself
@@ -440,6 +444,10 @@ def send_and_verify(
     effect_context: dict[str, str] | None = None,
 ) -> int:
     """Claim a one-shot attempt, send, then verify server-side custody."""
+    from core.send_policy import automated_send_allowed
+    if not automated_send_allowed():
+        print("mail-send: you must click Send in Mail.app; no attempt claimed", file=sys.stderr)
+        return EXIT_FAIL_CLOSED
     try:
         binding = authorization_binding(
             msg,

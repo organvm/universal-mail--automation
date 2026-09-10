@@ -42,11 +42,17 @@ def test_apply_unstars_noise_only(monkeypatch):
     _patch(monkeypatch, _rows(("1", "archive"), ("2", "archive"),
                               ("10", "keep"), ("11", "fire")))
     p = FakeProvider()
+    calls = []
+    def fake_intake(**kwargs):
+        calls.append(kwargs)
+        return {"status": "research_required", "queued": len(kwargs.get("rows", []))}
+    monkeypatch.setattr("core.maintenance.intake", fake_intake)
     out = sweep.sweep_starred_noise(p, limit=100, apply=True)
     assert out["available"] is True
-    assert set(p.unstarred) == {"1", "2"}          # noise only
-    assert "10" not in p.unstarred and "11" not in p.unstarred
-    assert out["unstarred"] == 2 and out["unstar_errors"] == 0
+    # Evidence-driven: direct unstar is queued as intake, not executed
+    assert p.unstarred == []
+    assert out["unstarred"] == 0 and out["unstar_errors"] == 0
+    assert any(c["source"] == "gmail_starred_review" and len(c["rows"]) == 4 for c in calls)
 
 
 def test_dry_run_touches_nothing_but_counts(monkeypatch):
@@ -60,8 +66,15 @@ def test_dry_run_touches_nothing_but_counts(monkeypatch):
 def test_unstar_error_is_counted(monkeypatch):
     _patch(monkeypatch, _rows(("1", "archive"), ("2", "archive")))
     p = FakeProvider(unstar_fail={"2"})
+    calls = []
+    def fake_intake(**kwargs):
+        calls.append(kwargs)
+        return {"status": "research_required", "queued": len(kwargs.get("rows", []))}
+    monkeypatch.setattr("core.maintenance.intake", fake_intake)
     out = sweep.sweep_starred_noise(p, limit=100, apply=True)
-    assert out["unstarred"] == 1 and out["unstar_errors"] == 1
+    # Errors are now at transaction verification, not inline unstar
+    assert out["unstarred"] == 0 and out["unstar_errors"] == 0
+    assert any(c["source"] == "gmail_starred_review" for c in calls)
 
 
 def test_unavailable_mailbox_is_fail_soft(monkeypatch):
@@ -142,7 +155,7 @@ def test_norm_subject_collapses_ids_and_dates():
            sweep._norm_subject("TaxRise Ticket Closed – 00063595")
 
 
-def test_organize_labels_all_and_collapses_duplicate_flags():
+def test_organize_labels_all_and_collapses_duplicate_flags(monkeypatch):
     # 3 identical-subject GCP billing flags (diff uids) + 1 distinct loan flag.
     keepers = [
         {"uid": "100", "sender": "CloudPlatform-noreply@google.com", "subject": "account 016B52 overdue"},
@@ -151,14 +164,19 @@ def test_organize_labels_all_and_collapses_duplicate_flags():
         {"uid": "200", "sender": "nelnetnoreply@nelnet.studentaid.gov", "subject": "prevent garnishment"},
     ]
     p = FakeProvider()
+    captured = {}
+    def fake_intake(**kwargs):
+        captured.update(kwargs)
+        return {"status": "research_required", "queued": len(kwargs.get("rows", []))}
+    monkeypatch.setattr("core.maintenance.intake", fake_intake)
     out = sweep.organize_flagged(p, keepers, apply=True)
-    # every keeper got a matter label
-    assert out["labeled"] == 4
-    assert {lbl for _, lbl in p.labeled} == {"Open Matters/Billing", "Open Matters/Student Loan"}
-    # the 3 GCP dupes collapse to 1 flag: the 2 older uids un-starred, newest (110) kept
-    assert out["deduped"] == 2
-    assert set(p.unstarred) == {"100", "105"}
-    assert "110" not in p.unstarred and "200" not in p.unstarred
+    # Evidence-driven: labeling/dedup is queued for reviewed evidence, not immediate
+    assert out["labeled"] == 0
+    assert out["deduped"] == 0
+    assert p.labeled == [] and p.unstarred == []
+    assert captured["source"] == "gmail_starred_matters"
+    assert len(captured["rows"]) == 4
+    assert {r["matter"] for r in captured["rows"]} == {"Open Matters/Billing", "Open Matters/Student Loan"}
 
 
 def test_organize_dry_run_touches_nothing():
@@ -181,9 +199,40 @@ def test_end_to_end_unstars_noise_keeps_critical(monkeypatch):
         r["is_starred"] = True
     monkeypatch.setattr(sweep, "classify", lambda p, m, l: rows)
     p = FakeProvider()
+    calls = []
+    def fake_intake(**kwargs):
+        calls.append(kwargs)
+        return {"status": "research_required", "queued": len(kwargs.get("rows", []))}
+    monkeypatch.setattr("core.maintenance.intake", fake_intake)
     out = sweep.sweep_starred_noise(p, limit=100, apply=True)
-    assert out["unstarred"] == 2
-    # only the two noise rows (uid = subject[:6]) were unstarred
-    assert set(p.unstarred) == {"Your d", "Ninten"}
-    assert "preven" not in p.unstarred   # nelnet garnishment kept
-    assert "interv" not in p.unstarred   # algora interview kept
+    assert out["unstarred"] == 0
+    assert p.unstarred == []
+    assert any(c["source"] == "gmail_starred_review" and len(c["rows"]) == 4 for c in calls)
+
+
+def test_classify_emits_id_reply_to_and_snippet():
+    from core.models import EmailMessage
+    from providers.base import ListMessagesResult
+
+    class FakeIMAP:
+        def list_messages(self, query="ALL", limit=10, mailbox="INBOX"):
+            return ListMessagesResult(messages=[EmailMessage(id="123", sender="s@x.com", subject="sub")])
+
+        def get_message_details(self, msg_id):
+            return EmailMessage(
+                id=msg_id,
+                sender="Recruiter <r@firm.com>",
+                subject="Role at Acme",
+                is_starred=False,
+                snippet="We are looking for a Python lead.",
+                headers={"reply-to": "replies@firm.com"},
+            )
+
+    rows = sweep.classify(FakeIMAP(), "INBOX", 10)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["id"] == "123"
+    assert r["uid"] == "123"
+    assert r["reply_to"] == "replies@firm.com"
+    assert r["snippet"] == "We are looking for a Python lead."
+

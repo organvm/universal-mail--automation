@@ -38,3 +38,4 @@ venv/
 .claude/sessions/
 .claude/worktrees/
 .serena/
+*.egg-info/

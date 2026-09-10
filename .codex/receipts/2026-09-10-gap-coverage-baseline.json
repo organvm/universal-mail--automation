@@ -1,0 +1,139 @@
+{
+  "schema": "uma.redacted_rollout_progress.v1",
+  "observed_at": "2026-09-10T00:00:00+00:00",
+  "commit": "978bd5735bd1",
+  "commit_subject": "feat: evidence-driven mail v6 + intake + native binding",
+  "branch": "feat/evidence-driven-mail",
+  "rollout_status": "in_progress",
+  "phase": "baseline_post_commit",
+  "plan": ".codex/plans/2026-09-10-full-gap-coverage.md",
+  "lane_stabilized": true,
+  "dirty_files_committed": 17,
+  "tests_passed": 1672,
+  "accounts": [
+    {
+      "account_alias": "gmail",
+      "inventory_complete": true,
+      "discovered_surfaces": 139,
+      "membership_records": 255437,
+      "inventory_receipt_sha256": "7b51998fb39f98c21642a08f62d163937d4e84eecddfd6f6fe6d1ac1606f9918",
+      "inventory_manifest": "audit/evidence-workflow/inventory/gmail/manifest.json",
+      "corpus_file": "audit/evidence-workflow/gmail-corpus.json",
+      "corpus_collected_threads": 342,
+      "corpus_total_threads": 66189,
+      "corpus_collected_messages": 401,
+      "corpus_collection_complete": false,
+      "next_thread": 351,
+      "corpus_reviewed_threads": 0,
+      "corpus_bytes": 286000000
+    },
+    {
+      "account_alias": "icloud",
+      "inventory_complete": true,
+      "discovered_surfaces": 26,
+      "membership_records": 779,
+      "inventory_receipt_sha256": "dd9f51febb96764b646b4d9c1a560a9b467c97e3a523d7193eca7deccec3cee4",
+      "corpus_file": "audit/evidence-workflow/icloud-corpus-v2.json",
+      "corpus_collected_threads": 736,
+      "corpus_total_threads": 736,
+      "corpus_collection_complete": true,
+      "corpus_reviewed_threads": 0
+    },
+    {
+      "account_alias": "outlook-dotted",
+      "inventory_complete": true,
+      "discovered_surfaces": 12,
+      "membership_records": 38,
+      "inventory_receipt_sha256": "b3fdc7370dc188bdcb9f050913714f249f325113fbb7e1c32349804735a74755",
+      "corpus_collected_threads": 38,
+      "corpus_collection_complete": true,
+      "corpus_reviewed_threads": 13,
+      "review_dir": "audit/evidence-workflow/reviews-outlook-dotted (13 json + lock)"
+    },
+    {
+      "account_alias": "outlook-undotted",
+      "inventory_complete": true,
+      "discovered_surfaces": 12,
+      "membership_records": 44,
+      "inventory_receipt_sha256": "1e155ddf187a37f4998571aaa84b794db2690cda4af8a2fc561669426476bd89",
+      "corpus_collected_threads": 44,
+      "corpus_collection_complete": true,
+      "corpus_reviewed_threads": 0
+    }
+  ],
+  "gmail_original_gaps_resolved": 4,
+  "gmail_gap_closure_receipt": "audit/evidence-workflow/gmail-gap-closure.json (f0585526\u2026 All Mail 116286 + 3 nested Personal/*, mailbox_writes=0)",
+  "github": {
+    "discovered_objects": 14746,
+    "researched_objects": 30,
+    "resolved_object_evidence": 28,
+    "unresolved_object_evidence": 2,
+    "unavailable_objects": 14,
+    "intake_cursor": 44,
+    "failed_objects_preserved_for_retry": true,
+    "archive_authority": false
+  },
+  "coverage_artifacts": {
+    "research_complete": false,
+    "reviewed_threads_total": 13,
+    "archive_coverage_v2": null,
+    "archive_plan_v2": null,
+    "evidence_bundle_v1": null,
+    "flag_plan_v6": null,
+    "archive_guard_v2": null
+  },
+  "evidence_loop": {
+    "intake": "core/maintenance.intake observation_only, seal+manifest AdvisoryFileLock, sweeps demoted (inbox/gmail_imap/gmail_labeler/archive_sorted)",
+    "binding": "core/native_mailapp_binding v1 + providers/mailapp native_* (X-GM-MSGID/Message-ID, transport universal-newline only)",
+    "evidence": "core/evidence_flags build_evidence_bundle revalidate_sources, 24h fresh, attachment question veto",
+    "plan": "core/flag_workflow plan v6 plan[evidence] in plan_hash",
+    "transaction": "flag_transactions + archive_transactions live validate_live_evidence, 1-3 canary / 1-25 rollout 24h, scope_identity_requires_reconciliation, +5s settlement"
+  },
+  "presentation": {
+    "semantic_names_visible": true,
+    "ordered_favorites_verified": true,
+    "native_group_collapsed": true,
+    "order": [
+      "NOW",
+      "ACTION",
+      "WAITING",
+      "SCHEDULED",
+      "REFERENCE",
+      "REVIEW",
+      "LATER"
+    ],
+    "visible_counts": [
+      3,
+      23,
+      9,
+      1,
+      14,
+      162,
+      3
+    ],
+    "visible_flagged_total": 215
+  },
+  "rollout": {
+    "canaries_approved": 0,
+    "message_flag_mutations": 0,
+    "archive_mutations": 0,
+    "verified_mailbox_mutations": 0,
+    "maintenance_migrated": false,
+    "legacy_candidate_to_corpus_reconciliation_verified": false
+  },
+  "remaining_work": [
+    "Phase 3: gmail research 342/66189 -> complete (25 threads * 20 reads per unit, 600s ceiling, resume validated, errors preserved)",
+    "Phase 4: review-record every thread (736 icloud + 66189 gmail + 31 outlook remaining) with attachment dispositions",
+    "Phase 5: archive-coverage v2 fresh 24h (4 inventory + all research receipts)",
+    "Phase 6-8: native bindings + evidence bundle v1 + plan v6 + guard v2 + canary 1-3 -> rollout 1-25 with operator selection_receipt",
+    "Phase 9: prove next live maintenance cycle preserves result"
+  ],
+  "send_authority": "human_click_in_mailapp_only",
+  "automated_sends": 0,
+  "scoped_tests_passed": 1672,
+  "private_evidence_tracked": false,
+  "local_remote_parity": "head a425d72 == origin/feat/evidence-driven-mail (pushed 2026-09-10, 0 ahead)",
+  "pushed_at": "2026-09-10T14:35:54-04:00",
+  "next_burst": ".venv/bin/python cli.py mail-research --input audit/evidence-workflow/gmail-corpus.json --output audit/evidence-workflow/research-gmail/manifest.json --resume audit/evidence-workflow/research-gmail/manifest.json --thread-limit 25 --work-units 1 --provider gmail --account padavano.anthony@gmail.com  (repeat; 600s ceiling shared, 25/20 caps, cursor 351->66189, 2634 units max, no creds in this session so blocked on IMAP_USER/IMAP_PASS or OP_ITEM)",
+  "validation_2026_09_10": "inventories 4/4 complete validated, corpus 4/4 sealed, research gmail 342/66189 next 351 remaining 65838, icloud/outlook 736/38/44 complete, reviews 13/38 outlook-dotted validated, gap-closure 4/4 mailbox_writes=0, tests 1672 passed"
+}

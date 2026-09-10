@@ -1,0 +1,113 @@
+{
+  "cases": [
+    {
+      "id": "owned-action",
+      "reviewed": true,
+      "as_of": "2026-09-08T00:00:00+00:00",
+      "obligation": {
+        "id": "o",
+        "title": "Synthetic obligation",
+        "thread_id": "t",
+        "messages": [
+          {
+            "provider": "gmail",
+            "account": "test@example.invalid",
+            "message_id": "one",
+            "evidence_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e",
+            "obligation_id": "o",
+            "message": {
+              "provider": "gmail",
+              "account": "test@example.invalid",
+              "message_id": "one",
+              "evidence_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "occurred_at": "2026-09-08T00:00:00Z",
+            "observed_at": "2026-09-08T00:00:00Z",
+            "source": "correspondence",
+            "fact": "request",
+            "next_actor": "operator",
+            "next_action": "Provide detail",
+            "deadline": null,
+            "consequential": false,
+            "proof": "synthetic-reviewed-receipt"
+          }
+        ],
+        "questions": [],
+        "protected": false,
+        "human_override": false
+      },
+      "expected_posture": "ACTION"
+    },
+    {
+      "id": "past-appointment",
+      "reviewed": true,
+      "as_of": "2026-09-08T00:00:00+00:00",
+      "obligation": {
+        "id": "o",
+        "title": "Synthetic obligation",
+        "thread_id": "t",
+        "messages": [
+          {
+            "provider": "gmail",
+            "account": "test@example.invalid",
+            "message_id": "one",
+            "evidence_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e",
+            "obligation_id": "o",
+            "message": {
+              "provider": "gmail",
+              "account": "test@example.invalid",
+              "message_id": "one",
+              "evidence_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "occurred_at": "2026-09-08T00:00:00Z",
+            "observed_at": "2026-09-08T00:00:00Z",
+            "source": "correspondence",
+            "fact": "commitment",
+            "next_actor": "operator",
+            "next_action": "Provide detail",
+            "deadline": "2026-09-07T00:00:00Z",
+            "consequential": false,
+            "proof": "synthetic-reviewed-receipt"
+          }
+        ],
+        "questions": [],
+        "protected": false,
+        "human_override": false
+      },
+      "expected_posture": "REVIEW"
+    },
+    {
+      "id": "missing-evidence",
+      "reviewed": true,
+      "as_of": "2026-09-08T00:00:00+00:00",
+      "obligation": {
+        "id": "o",
+        "title": "Synthetic obligation",
+        "thread_id": "t",
+        "messages": [
+          {
+            "provider": "gmail",
+            "account": "test@example.invalid",
+            "message_id": "one",
+            "evidence_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "evidence": [],
+        "questions": [],
+        "protected": false,
+        "human_override": false
+      },
+      "expected_posture": "REVIEW"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "schema": "uma.redacted_gap_resolution.v1",
+  "observed_at": "2026-09-08T23:14:37.656427+00:00",
+  "private_receipt_sha256": "f058552698894d5ada81add4db04b1f58f74a212ac061ed1b00ddc6313005b70",
+  "gmail_gaps_resolved": 4,
+  "all_mail_messages": 116286,
+  "verification": "Every frozen native UID is covered exactly once by validated account/surface/page receipts; all retained mail is a superset of the original flagged-only scope.",
+  "whole_account_inventory_complete": true,
+  "mailbox_writes": 0
+}

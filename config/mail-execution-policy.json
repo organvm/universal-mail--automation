@@ -1,0 +1,7 @@
+{
+  "schema": "uma.mail_execution_policy.v1",
+  "send_authority": "human_click_in_mailapp",
+  "automated_send_allowed": false,
+  "source": "Explicit operator instruction, 2026-09-08",
+  "draft_preparation_allowed": true
+}

@@ -5,7 +5,6 @@ Uses Microsoft Graph API with MSAL for consumer (MSA) authentication
 to access Outlook.com mailboxes.
 """
 
-import json
 import logging
 import os
 from datetime import datetime
@@ -16,7 +15,7 @@ from providers.base import (
     ProviderCapabilities,
     ListMessagesResult,
 )
-from core.models import EmailMessage, LabelAction, ProcessingResult
+from core.models import EmailMessage
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +105,7 @@ class OutlookProvider(EmailProvider):
         client_id: Optional[str] = None,
         token_cache_path: Optional[str] = None,
         scopes: Optional[List[str]] = None,
+        account: Optional[str] = None,
     ):
         """
         Initialize Outlook provider.
@@ -123,11 +123,13 @@ class OutlookProvider(EmailProvider):
             os.path.expanduser("~/.outlook_token_cache.json"),
         )
         self.scopes = scopes or DEFAULT_SCOPES
+        self.account = account or os.getenv("OUTLOOK_ACCOUNT")
         self._access_token: Optional[str] = None
         self._folder_cache: Dict[str, str] = {}
         self._category_cache: Dict[str, str] = {}  # name -> id
         self._msal_app = None
         self._session = None
+        self._identity_evidence = None
 
     def _get_msal_app(self):
         """Get or create MSAL PublicClientApplication."""
@@ -164,8 +166,19 @@ class OutlookProvider(EmailProvider):
         """Save MSAL token cache to disk."""
         app = self._get_msal_app()
         if app.token_cache.has_state_changed:
-            with open(self.token_cache_path, "w") as f:
-                f.write(app.token_cache.serialize())
+            import tempfile
+            from pathlib import Path
+            target = Path(self.token_cache_path).expanduser()
+            fd, temporary = tempfile.mkstemp(prefix=".outlook-token-", dir=target.parent)
+            try:
+                with os.fdopen(fd, "w") as output:
+                    output.write(app.token_cache.serialize())
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, target)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
     def _acquire_token(self) -> str:
         """Acquire access token via MSAL."""
@@ -173,8 +186,13 @@ class OutlookProvider(EmailProvider):
 
         # Try to get token silently from cache
         accounts = app.get_accounts()
-        if accounts:
-            result = app.acquire_token_silent(self.scopes, account=accounts[0])
+        if not self.account:
+            raise ValueError("explicit Outlook account required via account or OUTLOOK_ACCOUNT")
+        selected = [a for a in accounts if a.get("username", "").casefold() == self.account.casefold()]
+        if len(selected) > 1:
+            raise ValueError("Outlook account selection is ambiguous")
+        if selected:
+            result = app.acquire_token_silent(self.scopes, account=selected[0])
             if result and "access_token" in result:
                 self._save_token_cache()
                 return result["access_token"]
@@ -184,6 +202,8 @@ class OutlookProvider(EmailProvider):
         result = app.acquire_token_interactive(
             scopes=self.scopes,
             prompt="select_account",
+            login_hint=self.account,
+            timeout=480,
         )
 
         if "access_token" not in result:
@@ -207,36 +227,69 @@ class OutlookProvider(EmailProvider):
         self._session.headers.update({
             "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
+            "Prefer": 'IdType="ImmutableId"',
         })
         return self._session
 
     def _api_get(self, url: str, params: Optional[Dict] = None) -> Dict:
         """Make GET request to Graph API."""
         session = self._get_session()
-        response = session.get(url, params=params)
+        response = session.get(url, params=params, timeout=30)
         response.raise_for_status()
         return response.json()
 
     def _api_post(self, url: str, data: Dict) -> Dict:
         """Make POST request to Graph API."""
         session = self._get_session()
-        response = session.post(url, json=data)
+        response = session.post(url, json=data, timeout=30)
         response.raise_for_status()
         return response.json()
 
     def _api_patch(self, url: str, data: Dict) -> Dict:
         """Make PATCH request to Graph API."""
         session = self._get_session()
-        response = session.patch(url, json=data)
+        response = session.patch(url, json=data, timeout=30)
         response.raise_for_status()
         return response.json()
 
     def connect(self) -> None:
         """Establish connection via OAuth."""
         self._access_token = self._acquire_token()
+        try:
+            self._identity_evidence = self.verify_authenticated_identity()
+        except Exception:
+            self.disconnect()
+            raise
         self._init_folder_cache()
         self._init_category_cache()
         logger.info("Outlook provider connected")
+
+    def verify_authenticated_identity(self):
+        """Verify account through Graph without adding User.Read permission.
+
+        Mail-only consent can reject /me profile reads. In that case require the
+        explicit /users/{account} Inbox to equal the signed-in /me Inbox. Both
+        reads carry ImmutableId and use the same authenticated session.
+        """
+        from urllib.parse import quote
+        import requests
+        if not self.account or not self._access_token:
+            raise RuntimeError("authenticated Outlook identity unavailable")
+        try:
+            profile = self._api_get(f"{GRAPH_API_BASE}/me", params={"$select": "id,mail,userPrincipalName"})
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 403:
+                raise
+            inbox = self._api_get(f"{GRAPH_API_BASE}/me/mailFolders/inbox", params={"$select": "id"})
+            selected = self._api_get(f"{GRAPH_API_BASE}/users/{quote(self.account, safe='')}/mailFolders/inbox", params={"$select": "id"})
+            if not inbox.get("id") or inbox["id"] != selected.get("id"):
+                raise RuntimeError("authenticated Outlook identity does not match selected account")
+            return {"account": self.account, "server_mailbox_id": inbox["id"],
+                    "identity_method": "explicit_account_inbox_equals_authenticated_inbox"}
+        identities = {str(profile.get(k) or "").casefold() for k in ("mail", "userPrincipalName")}
+        if self.account.casefold() not in identities:
+            raise RuntimeError("authenticated Outlook identity does not match selected account")
+        return {"account": self.account, "server_account_id": profile["id"], "identity_method": "graph_profile"}
 
     def disconnect(self) -> None:
         """Close connection."""
@@ -244,6 +297,7 @@ class OutlookProvider(EmailProvider):
             self._session.close()
             self._session = None
         self._access_token = None
+        self._identity_evidence = None
         logger.debug("Outlook provider disconnected")
 
     def _init_folder_cache(self) -> None:

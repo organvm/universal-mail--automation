@@ -1,0 +1,90 @@
+{
+  "schema": "uma.redacted_rollout_progress.v1",
+  "observed_at": "2026-09-08T23:33:08.661221+00:00",
+  "rollout_status": "in_progress",
+  "accounts": [
+    {
+      "account_alias": "gmail",
+      "inventory_complete": true,
+      "discovered_surfaces": 139,
+      "membership_records": 255437,
+      "inventory_receipt_sha256": "7b51998fb39f98c21642a08f62d163937d4e84eecddfd6f6fe6d1ac1606f9918",
+      "collected_threads": 100,
+      "collected_messages": 150,
+      "collection_complete": false,
+      "reviewed_threads": 0
+    },
+    {
+      "account_alias": "icloud",
+      "inventory_complete": true,
+      "discovered_surfaces": 26,
+      "membership_records": 779,
+      "inventory_receipt_sha256": "dd9f51febb96764b646b4d9c1a560a9b467c97e3a523d7193eca7deccec3cee4",
+      "collected_threads": 625,
+      "collected_messages": 662,
+      "collection_complete": false,
+      "reviewed_threads": 0
+    },
+    {
+      "account_alias": "outlook-dotted",
+      "inventory_complete": true,
+      "discovered_surfaces": 12,
+      "membership_records": 38,
+      "inventory_receipt_sha256": "b3fdc7370dc188bdcb9f050913714f249f325113fbb7e1c32349804735a74755",
+      "collected_threads": 38,
+      "collected_messages": 38,
+      "collection_complete": true,
+      "reviewed_threads": 10
+    },
+    {
+      "account_alias": "outlook-undotted",
+      "inventory_complete": true,
+      "discovered_surfaces": 12,
+      "membership_records": 44,
+      "inventory_receipt_sha256": "1e155ddf187a37f4998571aaa84b794db2690cda4af8a2fc561669426476bd89",
+      "collected_threads": 44,
+      "collected_messages": 44,
+      "collection_complete": true,
+      "reviewed_threads": 0
+    }
+  ],
+  "gmail_original_gaps_resolved": 4,
+  "presentation": {
+    "semantic_names_visible": true,
+    "native_order_changed": false,
+    "ordered_favorites_verified": true,
+    "native_group_collapsed": true,
+    "ordered_views": [
+      "NOW",
+      "ACTION",
+      "WAITING",
+      "SCHEDULED",
+      "REFERENCE",
+      "REVIEW",
+      "LATER"
+    ],
+    "visible_counts": [
+      3,
+      23,
+      9,
+      1,
+      14,
+      162,
+      3
+    ],
+    "visible_flagged_total": 215,
+    "evidence": "Settled Mail.app accessibility observations after seven Add to Favorites UI operations; counts reconcile with Flagged."
+  },
+  "rollout": {
+    "canaries_approved": 0,
+    "message_flag_mutations": 0,
+    "archive_mutations": 0,
+    "verified_mailbox_mutations": 0,
+    "maintenance_migrated": false
+  },
+  "research_correction": "iCloud corpus retains 779 distinct native messages, including 14 copies previously grouped by shared RFC headers. Recollection status is reported above; prior receipts remain retained separately.",
+  "send_authority": "operator_click_in_mailapp_only",
+  "automated_sends": 0,
+  "scoped_tests_passed": 180,
+  "private_evidence_tracked": false
+}

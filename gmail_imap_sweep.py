@@ -47,12 +47,29 @@ def classify(provider, mailbox, limit):
         sender, subject = d.sender or "", d.subject or ""
         protected = is_protected_sender(sender)
         cat = categorize_with_tier(sender, subject)
-        rows.append({
-            "uid": m.id, "sender": sender, "subject": subject,
-            "label": cat.label, "tier": cat.tier, "protected": protected,
+        snip = (getattr(d, "snippet", "") or getattr(d, "body", "") or getattr(m, "snippet", "") or "").strip()
+        headers = getattr(d, "headers", None) or getattr(m, "headers", None)
+        reply_to = ""
+        if isinstance(headers, dict):
+            reply_to = (headers.get("reply-to") or headers.get("Reply-To") or "").strip()
+        row = {
+            "id": str(m.id),
+            "uid": m.id,
+            "sender": sender,
+            "subject": subject,
+            "label": cat.label,
+            "tier": cat.tier,
+            "protected": protected,
             "is_starred": d.is_starred,
-            "action": decide(sender, subject, cat.tier, protected),
-        })
+            "action": decide(sender, subject, cat.tier, protected, cat.label),
+        }
+        if snip:
+            row["snippet"] = snip[:200]
+        if reply_to:
+            row["reply_to"] = reply_to
+        if headers:
+            row["headers"] = dict(headers)
+        rows.append(row)
     return rows
 
 
@@ -154,32 +171,20 @@ def organize_flagged(provider, keepers, apply):
     collapse duplicate flags — within (matter, sender-domain, normalised-subject)
     keep only the NEWEST star (highest UID), un-star the redundant older copies
     (they keep the matter label, so nothing is lost — just de-cluttered). Labels
-    are additive/reversible; un-star is a \\Flagged bit."""
+    are additive/reversible; un-star is a \\Flagged bit.
+
+    Evidence-driven: direct label/unstar writes are queued as intake observations
+    for reviewed evidence planning; the transaction layer owns bounded writes."""
     for r in keepers:
         r["matter"] = _matter(r.get("sender", ""), r.get("subject", ""))
     from collections import Counter
     matters = Counter(r["matter"] for r in keepers)
     labeled = label_err = deduped = dedup_err = 0
     if apply:
-        for r in keepers:
-            if provider.apply_label(r["uid"], r["matter"]):
-                labeled += 1
-            else:
-                label_err += 1
-        groups = {}
-        for r in keepers:
-            dom = (r.get("sender", "").split("@")[-1] or "").strip("> ").lower()
-            groups.setdefault((r["matter"], dom, _norm_subject(r.get("subject", ""))), []).append(r)
-        for grp in groups.values():
-            if len(grp) < 2:
-                continue
-            ordered = sorted(grp, key=lambda x: int(x["uid"]) if str(x["uid"]).isdigit() else 0)
-            for r in ordered[:-1]:            # keep newest starred, un-star the rest
-                if provider.unstar(r["uid"]):
-                    deduped += 1
-                    r["deduped"] = True
-                else:
-                    dedup_err += 1
+        from core.maintenance import intake
+        account = getattr(provider, "user", None) or getattr(provider, "account", None) or "test@example.invalid"
+        intake(source="gmail_starred_matters", provider="gmail", account=account,
+               mailbox=STARRED_MAILBOX, rows=keepers)
     print("  [organize] matters: " + ", ".join(f"{m.split('/')[-1]}={n}"
                                                 for m, n in matters.most_common()))
     if apply:
@@ -209,13 +214,10 @@ def sweep_starred_noise(provider, limit, apply):
     keepers = [r for r in rows if _star_disposition(r) == "keep"]
     unstarred = err = 0
     if apply:
-        for r in noise:
-            if provider.unstar(r["uid"]):
-                unstarred += 1
-                r["unstarred"] = True
-            else:
-                err += 1
-                r["unstarred"] = False
+        from core.maintenance import intake
+        account = getattr(provider, "user", None) or getattr(provider, "account", None) or "test@example.invalid"
+        intake(source="gmail_starred_review", provider="gmail", account=account,
+               mailbox=STARRED_MAILBOX, rows=rows)
     tail = (f"  UNSTARRED={unstarred} (errors={err})" if apply else "  (dry run)")
     print(f"  [starred] {len(rows)} starred — noise(unstar)={len(noise)}  "
           f"keep={len(keepers)}{tail}")
@@ -235,9 +237,12 @@ def main(argv=None):
     ap.add_argument("--mailbox", default="INBOX")
     ap.add_argument("--apply", action="store_true",
                     help="actually flag/archive (default: dry run, no changes)")
+    ap.add_argument("--dispatch", help="exact approved canonical transaction envelope")
     ap.add_argument("--receipt", default=None, help="path to write the JSON receipt / undo manifest")
     ap.add_argument("--no-starred", dest="sweep_starred", action="store_false", default=True,
                     help="skip the residual-star sweep of [Gmail]/Starred (default: also sweep it)")
+    ap.add_argument("--classify-only", action="store_true",
+                    help="write audit/inbox_sweep-<account>.json in obligations schema without archiving")
     args = ap.parse_args(argv)
     if not args.user:
         ap.error("no mailbox configured — set IMAP_USER or pass --user <address>")
@@ -253,42 +258,33 @@ def main(argv=None):
         for r in [x for x in rows if x["action"] == "archive"][:25]:
             print(f"    archive  {r['sender'][:30]:30} | {r['subject'][:46]}")
 
+        if args.classify_only:
+            receipt = args.receipt or os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "audit",
+                f"inbox_sweep-{args.user.replace('@', '_at_')}.json")
+            os.makedirs(os.path.dirname(receipt), exist_ok=True)
+            with open(receipt, "w") as f:
+                json.dump({
+                    "result": {
+                        "account": args.user,
+                        "mailbox": args.mailbox,
+                        "total": len(rows),
+                        "archived": 0,
+                    },
+                    "rows": rows,
+                }, f, indent=2, default=str)
+            print(f"  classify-only receipt → {receipt}")
+            return 0
+
         result = {"user": args.user, "mailbox": args.mailbox, "total": len(rows),
                   "mode": "apply" if args.apply else "dry_run", "rows": rows}
         if args.apply:
-            flagged = archived = ferr = aerr = 0
-            unstarred = uerr = 0
-            for r in rows:
-                if r["action"] == "fire" and not r["is_starred"]:
-                    if provider.star(r["uid"]):
-                        flagged += 1
-                    else:
-                        ferr += 1
-                elif r["action"] == "archive":
-                    if provider.archive(r["uid"]):
-                        archived += 1
-                        r["archived"] = True
-                    else:
-                        aerr += 1
-                        r["archived"] = False
-                    # Noise leaving the inbox loses its spurious star too, so the
-                    # flag pile converges with the inbox instead of stranding a
-                    # star on every archived newsletter (the "257 flag storm"
-                    # residue). Unstar is a \Flagged STORE — proven to work.
-                    if r["is_starred"]:
-                        if provider.unstar(r["uid"]):
-                            unstarred += 1
-                            r["unstarred"] = True
-                        else:
-                            uerr += 1
-                            r["unstarred"] = False
-            result.update(flagged=flagged, archived=archived, unstarred=unstarred,
-                          flag_errors=ferr, archive_errors=aerr, unstar_errors=uerr)
-            print(f"  APPLIED: flagged={flagged}  archived={archived}  "
-                  f"unstarred={unstarred}  "
-                  f"(errors: flag={ferr} archive={aerr} unstar={uerr})")
+            from core.maintenance import intake
+            result.update(intake(source="gmail_imap_sweep", provider="gmail", account=args.user,
+                                 mailbox=args.mailbox, rows=rows))
+            print("  Observations queued; flags and Inbox membership await an approved evidence plan.")
         else:
-            print("  DRY RUN — no changes. Re-run with --apply to execute.")
+            print("  DRY RUN — proposals only.")
 
         # Residual-star sweep: unstar noise that is starred but already out of the
         # inbox, so the flag pile fully drains (not just the inbox-resident stars).
@@ -303,6 +299,12 @@ def main(argv=None):
         with open(receipt, "w") as f:
             json.dump(result, f, indent=2, default=str)
         print(f"  receipt → {receipt}")
+        if args.dispatch:
+            from pathlib import Path
+            from core.maintenance import dispatch_approved
+            outcome = dispatch_approved(Path(args.dispatch))
+            print(json.dumps(outcome))
+            return 0 if outcome["status"] == "completed" else 2
         return 0
     finally:
         provider.disconnect()

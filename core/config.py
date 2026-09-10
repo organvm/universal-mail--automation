@@ -20,6 +20,13 @@ DEFAULT_CONFIG_PATHS = [
     Path("mail_automation.yaml"),
 ]
 
+# Default synth config file locations (checked in order)
+DEFAULT_SYNTH_CONFIG_PATHS = [
+    Path("~/.config/mail_automation/synth.yaml").expanduser(),
+    Path("~/.synth.yaml").expanduser(),
+    Path("synth.yaml"),
+]
+
 
 @dataclass
 class ProviderConfig:
@@ -104,6 +111,9 @@ class Config:
     # VIP senders configuration
     vip_senders: Dict[str, Dict] = field(default_factory=dict)
 
+    # Modular Synth components
+    entities: Dict[str, Dict] = field(default_factory=dict)
+    patch_cables: List[Dict] = field(default_factory=list)
 
 def load_yaml_config(path: Path) -> Dict[str, Any]:
     """Load configuration from a YAML file."""
@@ -141,6 +151,31 @@ def find_config_file() -> Optional[Path]:
             return path
 
     return None
+
+
+def find_synth_config_file() -> Optional[Path]:
+    """Find the first existing synth config file."""
+    env_path = os.getenv("SYNTH_CONFIG") or os.getenv("MAIL_AUTO_SYNTH_CONFIG")
+    if env_path:
+        path = Path(env_path).expanduser()
+        if path.exists():
+            return path
+
+    for path in DEFAULT_SYNTH_CONFIG_PATHS:
+        if path.exists():
+            return path
+
+    return None
+
+
+def load_synth_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load synth configuration from YAML file."""
+    if config_path is None:
+        config_path = find_synth_config_file()
+
+    if config_path:
+        return load_yaml_config(config_path)
+    return {}
 
 
 def load_config(
@@ -259,6 +294,12 @@ def _apply_yaml_config(config: Config, data: Dict[str, Any]) -> None:
     if "vip_senders" in data:
         config.vip_senders = data["vip_senders"]
 
+    # Modular Synth components
+    if "entities" in data:
+        config.entities = data["entities"]
+    if "patch_cables" in data:
+        config.patch_cables = data["patch_cables"]
+
 
 def _apply_env_config(config: Config, prefix: str) -> None:
     """Apply environment variable overrides to config object."""
@@ -327,6 +368,134 @@ def apply_vip_senders_from_config(config: Config) -> int:
         logger.info(f"Loaded {count} VIP senders from config")
 
     return count
+
+
+def apply_identity_from_config(config: Any) -> int:
+    from core.identity import DEFAULT_DIRECTORY, Entity
+
+    entities = getattr(config, "entities", None)
+    if entities is None and isinstance(config, dict):
+        entities = config.get("entities", {})
+    if not entities or not isinstance(entities, dict):
+        return 0
+
+    count = 0
+    for key, ent_data in entities.items():
+        if isinstance(ent_data, dict):
+            ent = Entity(
+                name=ent_data.get("name", key),
+                emails=set(ent_data.get("emails", [])),
+                phones=set(ent_data.get("phones", [])),
+                handles=set(ent_data.get("handles", [])),
+                is_vip=ent_data.get("is_vip", False),
+                is_protected=ent_data.get("is_protected", False),
+                notes=ent_data.get("notes", ""),
+            )
+            DEFAULT_DIRECTORY.register(ent)
+            count += 1
+            logger.debug(f"Registered identity entity: {key}")
+
+    if count > 0:
+        logger.info(f"Loaded {count} identity entities from config")
+
+    return count
+
+
+def apply_patchbay_from_config(config: Any) -> int:
+    from core.patchbay import DEFAULT_PATCHBAY, PatchCable, SinkType
+
+    patch_cables = getattr(config, "patch_cables", None)
+    if patch_cables is None and isinstance(config, dict):
+        patch_cables = config.get("patch_cables", [])
+    if not patch_cables or not isinstance(patch_cables, list):
+        return 0
+
+    count = 0
+    for cable_data in patch_cables:
+        if isinstance(cable_data, dict) and "name" in cable_data and "sink_type" in cable_data and "destination" in cable_data:
+            cable = PatchCable(
+                name=cable_data["name"],
+                sink_type=SinkType(cable_data["sink_type"]),
+                destination=cable_data["destination"],
+                min_tier=cable_data.get("min_tier"),
+                channels=cable_data.get("channels", []),
+                labels=cable_data.get("labels", []),
+            )
+            DEFAULT_PATCHBAY.connect(cable)
+            count += 1
+
+    if count > 0:
+        logger.info(f"Loaded {count} patch cables from config")
+
+    return count
+
+
+def load_and_apply_synth_config(config_path: Optional[Path] = None) -> Dict[str, int]:
+    """
+    Load synth.yaml and register all defined entities and patch cables into the default singletons.
+    """
+    synth_data = load_synth_config(config_path)
+    if not synth_data:
+        return {"entities": 0, "patch_cables": 0}
+
+    entities_count = apply_identity_from_config(synth_data)
+    cables_count = apply_patchbay_from_config(synth_data)
+    return {"entities": entities_count, "patch_cables": cables_count}
+
+
+def create_sample_synth_config(path: Optional[Path] = None) -> str:
+    """
+    Generate a sample synth.yaml configuration file.
+
+    Args:
+        path: Optional path to write the config file
+
+    Returns:
+        Sample YAML configuration string
+    """
+    sample = '''# Modular Synth Configuration
+# Place this file at ~/.config/mail_automation/synth.yaml or synth.yaml
+
+version: "1.0"
+
+# Multi-channel identity mapping
+entities:
+  ceo:
+    name: "Executive Sponsor"
+    emails:
+      - "ceo@company.com"
+    phones:
+      - "+15555550100"
+    handles:
+      - "@ceo"
+    is_vip: true
+    is_protected: true
+    notes: "Executive Sponsor"
+
+# Routing matrix (patch cables)
+patch_cables:
+  - name: "urgent-alert"
+    sink_type: "webhook"
+    destination: "http://127.0.0.1:8000/internal/ingest"
+    min_tier: 1
+    channels:
+      - "email"
+      - "twilio"
+
+  - name: "persistent-audit-ledger"
+    sink_type: "local_log"
+    destination: "audit/synth_ledger.jsonl"
+    min_tier: 4
+'''
+
+    if path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(sample)
+        logger.info(f"Created sample synth config at {path}")
+
+    return sample
+
 
 
 def create_sample_config(path: Optional[Path] = None) -> str:

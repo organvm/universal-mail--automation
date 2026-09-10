@@ -46,7 +46,13 @@ from core.rules import (
 from core import __version__
 from core.state import StateManager
 from core.models import LabelAction, ProcessingResult
-from core.config import load_config, apply_vip_senders_from_config
+from core.config import (
+    load_config,
+    apply_vip_senders_from_config,
+    apply_patchbay_from_config,
+    apply_identity_from_config,
+    load_and_apply_synth_config,
+)
 from providers.base import EmailProvider, ProviderCapabilities
 
 # Logging setup
@@ -205,28 +211,15 @@ def run_labeler(
             else:
                 details = {m.id: provider.get_message_details(m.id) for m in list_result.messages}
 
+            from api.app import intake
+            from api.schemas import IntakeRequest
+            from core.patchbay import DEFAULT_PATCHBAY
+            from core.models import CommMessage
+
             # Categorize and prepare actions
             actions = []
             for msg_id, msg in details.items():
                 if not msg:
-                    continue
-
-                # PROTECTED-SENDER GATE (decision-layer short-circuit, mirrors
-                # icloud_triage.py): a protected sender is dropped from the action
-                # set entirely, so it never even gets archive=True. Defense in depth
-                # — the provider chokepoint (apply_actions) enforces it again.
-                if is_protected_sender(msg.sender):
-                    protected_count += 1
-                    # Record the held-in-inbox decision HERE — this is the first
-                    # (decision-layer) place protection fires, before any action is
-                    # built, so the receipt's protected_held count is complete and
-                    # not just whatever happened to reach the provider chokepoint.
-                    if audit is not None:
-                        audit.record(
-                            message_id=msg_id,
-                            sender=msg.sender,
-                            protected=True,
-                        )
                     continue
 
                 # VIP-only mode: skip non-VIP senders
@@ -234,55 +227,58 @@ def run_labeler(
                     non_vip_skipped += 1
                     continue
 
-                # Categorize with tier information
-                cat_result = categorize_with_tier(msg.sender, msg.subject)
+                # Build intake request and route through Modular Synth logic
+                req = IntakeRequest(
+                    message_id=msg_id,
+                    channel_id=provider.name,
+                    sender=msg.sender,
+                    subject=msg.subject,
+                    body=msg.snippet or ""
+                )
+                
+                decision = intake(req)
+                
+                # PROTECTED-SENDER GATE
+                if decision["is_protected"]:
+                    protected_count += 1
+                    if audit is not None:
+                        audit.record(message_id=msg_id, sender=msg.sender, protected=True)
+                    continue
 
-                if cat_result.is_vip:
+                label = decision["add_labels"][0] if decision["add_labels"] else "Uncategorized"
+                tier = decision.get("priority_tier", 4)
+                if tier == 1 and is_vip_sender(msg.sender):
                     vip_count += 1
-                label = cat_result.label
+                    
                 stats[label] = stats.get(label, 0) + 1
                 result.add_label_stat(label)
 
-                # Build action — carry the sender so the provider chokepoint can
-                # re-verify the protected gate before any archive/move.
+                # Build action for the provider
                 action = LabelAction(message_id=msg_id, sender=msg.sender)
-                action.add_labels.append(label)
-
+                action.add_labels = decision["add_labels"]
+                action.archive = decision["archive"]
+                action.star = decision["star"]
+                
                 if tier_routing:
-                    # Apply tier-based routing
-                    tier_config = cat_result.tier_config
-
-                    # Set category (for providers that support it)
-                    if has_categories:
-                        action.category = tier_config.name
-                        action.category_color = tier_config.color
-
-                    # Set target folder for tier routing
-                    if tier_config.folder:
-                        action.target_folder = tier_config.folder
-
-                    # Star based on tier config
-                    if tier_config.star:
-                        action.star = True
-
-                    # Archive based on tier config
-                    if not tier_config.keep_in_inbox:
-                        action.archive = True
-                else:
-                    # Legacy behavior
-                    if should_star(label):
-                        action.star = True
-
-                    if not should_keep_in_inbox(label):
-                        action.archive = True
+                    if has_categories and decision.get("category"):
+                        action.category = decision["category"]
+                        action.category_color = decision.get("category_color")
+                    if decision.get("target_folder"):
+                        action.target_folder = decision["target_folder"]
 
                 if remove_label and label != remove_label:
                     action.remove_labels.append(remove_label)
-
+                # We append the action directly to be applied in batch below.
                 actions.append(action)
-                tier_info = f" [Tier {cat_result.tier}]" if tier_routing else ""
-                vip_info = f" [VIP: {cat_result.vip_note}]" if cat_result.is_vip else ""
-                logger.debug(f"Message {msg_id}: {msg.sender[:30]}... -> {label}{tier_info}{vip_info}")
+
+                # Transmit through PatchBay to fire any webhook or log sinks.
+                comm_msg = CommMessage(
+                    id=msg_id, channel_id=provider.name, sender=msg.sender, subject=msg.subject, body=msg.snippet or "", priority_tier=tier
+                )
+                DEFAULT_PATCHBAY.transmit(action, comm_msg, provider_callback=None)
+                
+                tier_info = f" [Tier {tier}]" if tier_routing else ""
+                logger.debug(f"Message {msg_id}: {msg.sender[:30]}... -> {label}{tier_info}")
 
             # Apply actions
             if actions and not dry_run:
@@ -426,6 +422,9 @@ def cmd_label(args: argparse.Namespace) -> int:
     # Load config and apply VIP senders
     config = load_config()
     apply_vip_senders_from_config(config)
+    apply_identity_from_config(config)
+    apply_patchbay_from_config(config)
+    load_and_apply_synth_config()
 
     provider = get_provider(
         args.provider,
@@ -563,6 +562,9 @@ def cmd_summary(args: argparse.Namespace) -> int:
     # Load config and apply VIP senders
     config = load_config()
     apply_vip_senders_from_config(config)
+    apply_identity_from_config(config)
+    apply_patchbay_from_config(config)
+    load_and_apply_synth_config()
 
     provider = get_provider(
         args.provider,
@@ -758,6 +760,9 @@ def cmd_vip(args: argparse.Namespace) -> int:
     # Load config and apply VIP senders
     config = load_config()
     apply_vip_senders_from_config(config)
+    apply_identity_from_config(config)
+    apply_patchbay_from_config(config)
+    load_and_apply_synth_config()
 
     from core.rules import get_vip_senders
 
@@ -868,6 +873,9 @@ def cmd_escalate(args: argparse.Namespace) -> int:
     # Load config and apply VIP senders
     config = load_config()
     apply_vip_senders_from_config(config)
+    apply_identity_from_config(config)
+    apply_patchbay_from_config(config)
+    load_and_apply_synth_config()
 
     provider = get_provider(
         args.provider,
@@ -1001,6 +1009,9 @@ def cmd_triage(args: argparse.Namespace) -> int:
 
     config = load_config()
     apply_vip_senders_from_config(config)
+    apply_identity_from_config(config)
+    apply_patchbay_from_config(config)
+    load_and_apply_synth_config()
 
     provider = get_provider(
         args.provider,

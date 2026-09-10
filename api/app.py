@@ -62,6 +62,9 @@ except Exception as e:  # ImportError on <3.10 / missing dep — degrade gracefu
 
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
+    from core.config import load_and_apply_synth_config
+    load_and_apply_synth_config()
+
     async with contextlib.AsyncExitStack() as stack:
         if _MCP_AVAILABLE:
             await stack.enter_async_context(_mcp.session_manager.run())
@@ -95,6 +98,119 @@ def health() -> dict:
 def senders_check(req: schemas.SenderCheckRequest) -> dict:
     """Would this sender be protected (never archived), and how is it categorized?"""
     return service.check_sender(req.sender, req.subject)
+
+@app.post("/v1/intake", response_model=schemas.IntakeResponse)
+def intake(req: schemas.IntakeRequest) -> dict:
+    """Modular Synth Input Jack: receives a standard CommMessage, returns a CommAction decision."""
+    import uuid
+    from datetime import datetime, timezone
+    from core.identity import DEFAULT_DIRECTORY
+    from core.models import CommMessage, CommAction
+    from core.rules import categorize_with_tier, is_protected_sender
+    from core.sla import compute_sla
+    
+    msg_id = req.message_id or str(uuid.uuid4())
+    msg = CommMessage(
+        id=msg_id,
+        channel_id=req.channel_id,
+        sender=req.sender,
+        subject=req.subject,
+        body=req.body,
+        snippet=req.snippet,
+        date=datetime.now(timezone.utc),
+    )
+    
+    cat = categorize_with_tier(msg.sender, msg.subject)
+    
+    identity = DEFAULT_DIRECTORY.resolve(msg.sender)
+    is_vip_identity = identity.is_vip if identity else False
+    if is_vip_identity:
+        cat.tier = 1
+
+    # Check identity directory and rules gate for protection
+    protected = (identity and identity.is_protected) or is_protected_sender(msg.sender)
+    
+    # Compute channel-adjusted SLA and priority tier
+    effective_tier, deadline = compute_sla(msg.channel_id, cat.tier, msg.date)
+    
+    # Protected senders are never archived
+    should_archive = False if protected else not cat.tier_config.keep_in_inbox
+    should_star = True if protected or effective_tier == 1 else cat.tier_config.star
+    
+    return {
+        "message_id": msg.id,
+        "channel_id": msg.channel_id,
+        "archive": should_archive,
+        "star": should_star,
+        "add_labels": [cat.label],
+        "remove_labels": [],
+        "target_folder": cat.tier_config.folder,
+        "priority_tier": effective_tier,
+        "sla_deadline": deadline.isoformat(),
+        "is_protected": protected,
+        "category": cat.tier_config.name,
+        "category_color": cat.tier_config.color,
+    }
+
+
+@app.post("/v1/inbound/twilio", response_model=schemas.IntakeResponse)
+def inbound_twilio(req: schemas.TwilioInboundRequest) -> dict:
+    """Twilio Inbound Generator Jack: adapts Twilio webhook SMS payloads into CommMessage triage."""
+    intake_req = schemas.IntakeRequest(
+        message_id=req.MessageSid or f"twilio-{req.From}",
+        channel_id="twilio",
+        sender=req.From,
+        subject=req.Body[:60] if req.Body else "",
+        body=req.Body or "",
+    )
+    return intake(intake_req)
+
+
+@app.post("/v1/inbound/generic", response_model=schemas.IntakeResponse)
+def inbound_generic(req: schemas.GenericInboundRequest) -> dict:
+    """Generic Inbound Adapter Jack: adapts arbitrary JSON webhook payloads into CommMessage triage."""
+    intake_req = schemas.IntakeRequest(
+        message_id=req.event_id or f"{req.source}-{req.sender}",
+        channel_id=req.source,
+        sender=req.sender,
+        subject=req.subject or (req.content[:60] if req.content else ""),
+        body=req.content,
+    )
+    return intake(intake_req)
+
+
+@app.post("/v1/dispatch", response_model=schemas.DispatchResponse)
+def dispatch(req: schemas.IntakeRequest) -> dict:
+    """Modular Synth Output Jack: triages inbound message and fires active patch cables."""
+    from core.models import CommAction, CommMessage
+    from core.patchbay import DEFAULT_PATCHBAY
+
+    action_dict = intake(req)
+    action = CommAction(
+        message_id=action_dict["message_id"],
+        channel_id=action_dict["channel_id"],
+        sender=req.sender,
+        archive=action_dict["archive"],
+        star=action_dict["star"],
+    )
+    # Attach labels and tier for patch matching
+    action.add_labels = action_dict["add_labels"]
+    action.priority_tier = action_dict["priority_tier"]
+
+    msg = CommMessage(
+        id=req.message_id,
+        channel_id=req.channel_id,
+        sender=req.sender,
+        subject=req.subject,
+        body=req.body,
+    )
+
+    transmissions = DEFAULT_PATCHBAY.transmit(action, msg)
+    return {
+        "action": action_dict,
+        "cables_triggered": len(transmissions),
+        "transmissions": transmissions,
+    }
 
 
 @app.post("/v1/triage/preview", response_model=schemas.TriageResponse)

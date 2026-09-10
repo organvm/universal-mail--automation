@@ -1286,3 +1286,55 @@ def test_cli_discovers_explicit_credential_file_without_sourcing(monkeypatch, tm
     )
     assert rc == EXIT_OK
     assert _FakeSMTP.send_calls == 0
+
+
+def test_compose_rejects_bloated_ai_slop_envelope(monkeypatch, tmp_path):
+    _set_env_creds(monkeypatch)
+    body = tmp_path / "slop.txt"
+    body.write_text(
+        "Dear friend,\n\n"
+        "I hope this email finds you well and you are having a wonderful week.\n\n"
+        "I am writing to follow up on our previous correspondence. Please do not hesitate to reach out.\n\n"
+        "Best,\nAnthony"
+    )
+    rc = mail_send.main(
+        [
+            "--attempt-id",
+            ATTEMPT,
+            "--to",
+            "a@b.c",
+            "--subject",
+            "s",
+            "--body-file",
+            str(body),
+        ]
+    )
+    assert rc == EXIT_FAIL_CLOSED
+    assert _FakeSMTP.send_calls == 0
+
+
+def test_compose_allows_bloated_body_when_skip_envelope_check_passed(monkeypatch, tmp_path):
+    _set_env_creds(monkeypatch)
+    body = tmp_path / "slop.txt"
+    body.write_text(
+        "Dear friend,\n\n"
+        "I hope this email finds you well and you are having a wonderful week.\n\n"
+        "I am writing to follow up on our previous correspondence. Please do not hesitate to reach out.\n\n"
+        "Best,\nAnthony"
+    )
+    rc = mail_send.main(
+        [
+            "--attempt-id",
+            ATTEMPT,
+            "--to",
+            "a@b.c",
+            "--subject",
+            "s",
+            "--body-file",
+            str(body),
+            "--skip-envelope-check",
+        ]
+    )
+    assert rc == EXIT_OK
+    assert _FakeSMTP.send_calls == 0
+

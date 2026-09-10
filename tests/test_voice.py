@@ -96,6 +96,22 @@ class TestDrafting:
         draft = p.draft_reply(d)
         assert "Friday" in draft
 
+    def test_draft_complies_with_envelope_policy(self):
+        from core.envelope_policy import validate_envelope
+
+        p = default_voice_profile(name="Anthony")
+        d = self._dossier(
+            questions=["Can we meet Friday?"],
+            action_items=["Review the spec"],
+            deadlines=["by EOD"],
+        )
+        draft = p.draft_reply(d)
+        verdict = validate_envelope(draft)
+        assert verdict.is_valid is True
+        assert len(verdict.violations) == 0
+        assert verdict.word_count <= 90
+
+
 
 class TestPersistence:
     def test_save_and_load_roundtrip(self, tmp_path):

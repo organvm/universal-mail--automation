@@ -2,7 +2,8 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
-# Universal Mail Automation
+# Universal Communications Synth
+### (Universal Mail Automation)
 
 [![CI](https://github.com/organvm-iii-ergon/universal-mail--automation/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm-iii-ergon/universal-mail--automation/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-pending-lightgrey)](https://github.com/organvm-iii-ergon/universal-mail--automation)
@@ -12,7 +13,7 @@
 [![Python](https://img.shields.io/badge/lang-Python-informational)](https://github.com/organvm-iii-ergon/universal-mail--automation)
 
 
-**Automated inbox triage across Gmail, Outlook, and iCloud using a shared categorization engine, Eisenhower priority tiers, and time-based escalation — unified behind a single CLI.**
+**A modular communications triage and routing synth across Mail (Gmail, Outlook, iCloud), SMS (Twilio), and Event Webhooks — powered by multi-channel identity resolution, Eisenhower priority tiers, declarative patchbay routing, and provable safety gates.**
 
 ---
 

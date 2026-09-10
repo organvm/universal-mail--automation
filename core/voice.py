@@ -26,7 +26,10 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Set, Optional, Tuple, Iterable, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
+
+
+
 
 if TYPE_CHECKING:
     from core.research import ResearchDossier
@@ -157,7 +160,7 @@ class VoiceProfile:
         self,
         dossier: "ResearchDossier",
         recipient_first: str = "",
-        max_points: int = 4,
+        max_points: int = 3,
     ) -> str:
         """Compose a suggested reply in this voice answering the dossier.
 

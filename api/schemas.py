@@ -125,3 +125,47 @@ class TriageResponse(BaseModel):
     # Set by the API: the id under which a signed receipt was persisted, fetchable
     # at GET /v1/audit/{run_id}. Optional so the engine's own dict stays valid.
     run_id: Optional[str] = None
+
+
+class IntakeRequest(BaseModel):
+    message_id: str
+    channel_id: str = "email"
+    sender: str
+    subject: str = ""
+    body: str = ""
+    snippet: str = ""
+
+class IntakeResponse(BaseModel):
+    message_id: str
+    channel_id: str
+    archive: bool
+    star: bool
+    add_labels: List[str]
+    remove_labels: List[str]
+    target_folder: Optional[str] = None
+    priority_tier: Optional[int] = None
+    sla_deadline: Optional[str] = None
+    is_protected: bool = False
+    category: Optional[str] = None
+    category_color: Optional[str] = None
+
+
+class TwilioInboundRequest(BaseModel):
+    From: str
+    Body: str
+    MessageSid: Optional[str] = None
+    To: Optional[str] = None
+
+
+class GenericInboundRequest(BaseModel):
+    source: str = "webhook"
+    sender: str
+    content: str
+    subject: Optional[str] = ""
+    event_id: Optional[str] = None
+
+
+class DispatchResponse(BaseModel):
+    action: IntakeResponse
+    cables_triggered: int
+    transmissions: List[dict]

@@ -39,6 +39,48 @@ def test_sender_check_not_protected():
     assert r.json()["protected"] is False
 
 
+def test_intake_endpoint():
+    r = client.post("/v1/intake", json={
+        "message_id": "sms-123",
+        "channel_id": "twilio",
+        "sender": "+18005551234",
+        "subject": "Your chase balance is $1,000",
+        "body": ""
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["message_id"] == "sms-123"
+    assert body["channel_id"] == "twilio"
+    assert body["add_labels"] == ["Finance/Banking"]
+    assert body["priority_tier"] == 1
+    assert body["archive"] is False
+    assert body["star"] is True
+
+def test_intake_endpoint_tier4():
+    # Email channel preserves base tier 4
+    r = client.post("/v1/intake", json={
+        "message_id": "email-456",
+        "channel_id": "email",
+        "sender": "random-marketing@example.com",
+        "subject": "Discount on stuff",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["priority_tier"] == 4
+    assert body["archive"] is True
+    assert body["star"] is False
+
+    # Twilio SMS channel boosts tier by 1 (tier 4 -> 3)
+    r_sms = client.post("/v1/intake", json={
+        "message_id": "sms-456",
+        "channel_id": "twilio",
+        "sender": "random-marketing@example.com",
+        "subject": "Discount on stuff",
+    })
+    assert r_sms.status_code == 200
+    assert r_sms.json()["priority_tier"] == 3
+
+
 def test_sender_check_rejects_header_control_characters():
     r = client.post(
         "/v1/senders/check",

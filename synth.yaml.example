@@ -1,0 +1,46 @@
+# Modular Synth Configuration
+# Copy this file to ~/.config/mail_automation/synth.yaml or synth.yaml in the project root.
+
+version: "1.0"
+
+# Multi-channel identity mapping
+# Normalizes email addresses, phone numbers (E.164 / NANP), and chat handles to canonical entities.
+entities:
+  ceo:
+    name: "Executive Sponsor"
+    emails:
+      - "ceo@company.com"
+      - "board@venture.capital"
+    phones:
+      - "+15555550100"
+    handles:
+      - "@ceo"
+    is_vip: true
+    is_protected: true
+    notes: "Executive Sponsor / Board Member"
+
+  cfo:
+    name: "Financial Controller"
+    emails:
+      - "finance@company.com"
+    phones:
+      - "+15555550101"
+    is_vip: true
+    is_protected: true
+    notes: "Treasury and Payments"
+
+# Routing matrix (patch cables)
+# Directs categorized CommActions to external webhook jacks, local audit ledgers, or provider sinks.
+patch_cables:
+  - name: "urgent-alert-webhook"
+    sink_type: "webhook"
+    destination: "http://127.0.0.1:8000/internal/ingest"
+    min_tier: 1
+    channels:
+      - "email"
+      - "twilio"
+
+  - name: "persistent-audit-ledger"
+    sink_type: "local_log"
+    destination: "audit/synth_ledger.jsonl"
+    min_tier: 4

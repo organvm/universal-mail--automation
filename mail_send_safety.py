@@ -34,6 +34,14 @@ from cryptography.hazmat.primitives.serialization import (
     load_pem_public_key,
 )
 
+from core.envelope_policy import (
+    EnvelopePolicy,
+    EnvelopePolicyError,
+    EnvelopeVerdict,
+    validate_envelope,
+)
+
+
 AUTHORIZATION_SCHEMA = "uma.mail_send_authorization.v1"
 AUTHORIZATION_SIGNATURE_ALGORITHM = "Ed25519"
 ATTEMPT_CLAIM_SCHEMA = "uma.mail_send_attempt_claim.v1"
@@ -791,3 +799,41 @@ def claim_authorized_attempt(
     finally:
         os.close(directory_fd)
     return root / filename
+
+
+def validate_message_envelope(
+    msg: Message,
+    *,
+    attachments: Sequence[object] | None = None,
+    policy: EnvelopePolicy | None = None,
+    allow_unbounded: bool = False,
+) -> EnvelopeVerdict:
+    """Evaluate an email message body against the envelope policy.
+
+    Raises EnvelopePolicyError on failure unless allow_unbounded is True.
+    """
+    body_text = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                payload = part.get_payload(decode=True)
+                if isinstance(payload, bytes):
+                    charset = part.get_content_charset() or "utf-8"
+                    body_text = payload.decode(charset, errors="replace")
+                    break
+    else:
+        payload = msg.get_payload(decode=True)
+        if isinstance(payload, bytes):
+            charset = msg.get_content_charset() or "utf-8"
+            body_text = payload.decode(charset, errors="replace")
+        elif isinstance(msg.get_payload(), str):
+            body_text = str(msg.get_payload())
+
+    verdict = validate_envelope(body_text, attachments=attachments, policy=policy)
+    if not allow_unbounded and not verdict.is_valid:
+        raise EnvelopePolicyError(
+            f"envelope policy violation: {'; '.join(verdict.violations)}",
+            verdict=verdict,
+        )
+    return verdict
+

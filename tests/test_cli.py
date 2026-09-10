@@ -120,8 +120,10 @@ class _ExplodingApplyProvider(_FakeProvider):
 
 @pytest.fixture(autouse=True)
 def _quiet_config(monkeypatch):
-    monkeypatch.setattr(cli, "load_config", lambda: SimpleNamespace())
+    monkeypatch.setattr(cli, "load_config", lambda: SimpleNamespace(entities={}, patch_cables=[], vip_senders={}))
     monkeypatch.setattr(cli, "apply_vip_senders_from_config", lambda _config: None)
+    monkeypatch.setattr(cli, "apply_identity_from_config", lambda _config: None)
+    monkeypatch.setattr(cli, "apply_patchbay_from_config", lambda _config: None)
     monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
 
 

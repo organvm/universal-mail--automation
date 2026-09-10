@@ -18,4 +18,6 @@ produces:
   description: Mailbox triage pipeline — per-item research, priority scoring, voice-matched reply drafts (CLI `triage`)
 - type: artifact
   description: Web dashboard (web/index.html) with per-provider brand theming phased to the interfaced mailbox
+- type: artifact
+  description: Modular synth communication matrix — multi-channel intake (SMS, webhooks), entity directory, and declarative patchbay routing
 consumes: []

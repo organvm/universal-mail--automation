@@ -1125,6 +1125,84 @@ class MailAppProvider(EmailProvider):
         return {"reference": ref.__dict__, "headers": headers, "body": body,
                 "body_may_be_truncated": len(body) >= char_limit}
 
+    def native_account_mapping(self, account: str) -> dict:
+        """Read the exact configured account and addresses; display names are not identities."""
+        if not isinstance(account, str) or not account.strip():
+            raise ValueError("explicit Mail.app account required")
+        script = (
+            'tell application "Mail"\n'
+            f' set candidates to (accounts whose name is {self._as_applescript(account)})\n'
+            ' if (count of candidates) is not 1 then error "ACCOUNT_NOT_UNIQUE"\n'
+            ' set a to item 1 of candidates\n'
+            ' set parts to {id of a as string, name of a as string}\n'
+            ' repeat with addressText in (email addresses of a)\n'
+            '  set end of parts to addressText as string\n'
+            ' end repeat\n'
+            ' set AppleScript\'s text item delimiters to ASCII character 31\n'
+            ' return parts as string\n'
+            'end tell'
+        )
+        parts = self._run_applescript(script).split(_FIELD_SEP)
+        if len(parts) < 3 or not parts[0] or parts[1] != account:
+            raise ProviderScriptError("invalid native account mapping")
+        return {"account_id": parts[0], "account": parts[1], "email_addresses": parts[2:]}
+
+    def native_evidence_reference(self, *, account: str, mailbox: str,
+                                  rfc_message_id: str) -> MessageReference:
+        """Resolve exactly one RFC identity inside one explicit mailbox and account."""
+        if (not isinstance(rfc_message_id, str) or not rfc_message_id.startswith("<")
+                or not rfc_message_id.endswith(">") or any(c.isspace() for c in rfc_message_id)
+                or rfc_message_id.count("<") != 1 or rfc_message_id.count(">") != 1):
+            raise ValueError("one exact RFC Message-ID required")
+        raw_id = rfc_message_id[1:-1]
+        if not raw_id:
+            raise ValueError("empty RFC Message-ID")
+        script = (
+            'tell application "Mail"\n'
+            f' set targetMailbox to {self._mailbox_reference(mailbox, account)}\n'
+            f' set candidates to (messages of targetMailbox whose message id is {self._as_applescript(raw_id)})\n'
+            ' if (count of candidates) is not 1 then error "IDENTITY_NOT_UNIQUE"\n'
+            ' return id of item 1 of candidates as string\n'
+            'end tell'
+        )
+        native_id = self._run_applescript(script)
+        return self.resolve_scoped(MessageReference(provider="mailapp", account=account,
+                                                    mailbox=mailbox, provider_id=native_id))
+
+    def read_native_source_ref(self, ref: MessageReference, *, byte_limit: int = 10485760) -> dict:
+        """Read full Mail source, preserving its trailing text through the osascript frame.
+
+        osascript's text transport converts CR/CRLF into LF. The binding layer
+        accounts for only this transport conversion, never MIME/header rewriting.
+        No message property is assigned; flag and read status must remain stable.
+        """
+        if type(byte_limit) is not int or not 1 <= byte_limit <= 10485760:
+            raise ValueError("source limit must be 1–10485760 bytes")
+        before = self._verify_evidence(ref)
+        script = (
+            'tell application "Mail"\n'
+            f' set targetMailbox to {self._mailbox_reference(ref.mailbox, ref.account)}\n'
+            f' set candidates to (messages of targetMailbox whose id is {ref.provider_id})\n'
+            ' if (count of candidates) is not 1 then error "IDENTITY_NOT_UNIQUE"\n'
+            ' set m to item 1 of candidates\n'
+            ' set fullSource to source of m as string\n'
+            f' if (length of fullSource) > {byte_limit} then error "SOURCE_TOO_LARGE"\n'
+            ' return "UMA_SOURCE_V1" & (ASCII character 31) & fullSource & (ASCII character 31) & "UMA_SOURCE_END"\n'
+            'end tell'
+        )
+        output = self._run_applescript(script)
+        prefix, suffix = "UMA_SOURCE_V1" + _FIELD_SEP, _FIELD_SEP + "UMA_SOURCE_END"
+        if not output.startswith(prefix) or not output.endswith(suffix):
+            raise ProviderScriptError("full source framing failed")
+        source = output[len(prefix):-len(suffix)]
+        if not source or len(source.encode("utf-8")) > byte_limit:
+            raise ProviderScriptError("full source empty or oversized")
+        after = self._verify_evidence(ref)
+        if after != before:
+            raise FlagStateDriftError("message changed during full source read")
+        return {"source": source, "complete": True, "transport": "osascript_unicode_newlines",
+                "reference": ref.__dict__, "native_state": before}
+
     def related_sent_refs(self, ref: MessageReference, headers: str, *,
                           mailbox: str, limit: int = 19) -> list[MessageReference]:
         """Retrieve bounded Sent candidates by RFC threading evidence, never subject."""

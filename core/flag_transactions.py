@@ -1019,6 +1019,14 @@ class TransactionEngine:
             )
         except FlagWorkflowError:
             return "mutation_contract_invalid"
+        # A v6 approval also binds the current complete correspondence review
+        # and exact native/Mail.app identity evidence. Check it again at every
+        # write preflight so later reopenings cannot inherit an old approval.
+        try:
+            from core.evidence_flags import validate_live_evidence
+            validate_live_evidence(plan)
+        except FlagWorkflowError:
+            return "reviewed_evidence_invalid"
         if approval.is_human_canary:
             # Approval validation already proves the exact nomination,
             # temporary flag, original review state, and deterministic risk
@@ -1604,6 +1612,13 @@ class TransactionEngine:
             write_counted = False
             try:
                 try:
+                    try:
+                        from core.evidence_flags import validate_live_evidence
+                        validate_live_evidence(plan)
+                        if self.overrides.is_suppressed(m.ref_digest):
+                            raise FlagWorkflowError("human override recorded after batch preflight")
+                    except FlagWorkflowError as exc:
+                        raise ProviderRefused("reviewed_evidence_or_override_changed") from exc
                     if execution_flag == FlagColor.NO_FLAG:
                         ok = provider.clear_flag_ref(ref)
                     else:

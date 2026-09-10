@@ -154,32 +154,20 @@ def organize_flagged(provider, keepers, apply):
     collapse duplicate flags — within (matter, sender-domain, normalised-subject)
     keep only the NEWEST star (highest UID), un-star the redundant older copies
     (they keep the matter label, so nothing is lost — just de-cluttered). Labels
-    are additive/reversible; un-star is a \\Flagged bit."""
+    are additive/reversible; un-star is a \\Flagged bit.
+
+    Evidence-driven: direct label/unstar writes are queued as intake observations
+    for reviewed evidence planning; the transaction layer owns bounded writes."""
     for r in keepers:
         r["matter"] = _matter(r.get("sender", ""), r.get("subject", ""))
     from collections import Counter
     matters = Counter(r["matter"] for r in keepers)
     labeled = label_err = deduped = dedup_err = 0
     if apply:
-        for r in keepers:
-            if provider.apply_label(r["uid"], r["matter"]):
-                labeled += 1
-            else:
-                label_err += 1
-        groups = {}
-        for r in keepers:
-            dom = (r.get("sender", "").split("@")[-1] or "").strip("> ").lower()
-            groups.setdefault((r["matter"], dom, _norm_subject(r.get("subject", ""))), []).append(r)
-        for grp in groups.values():
-            if len(grp) < 2:
-                continue
-            ordered = sorted(grp, key=lambda x: int(x["uid"]) if str(x["uid"]).isdigit() else 0)
-            for r in ordered[:-1]:            # keep newest starred, un-star the rest
-                if provider.unstar(r["uid"]):
-                    deduped += 1
-                    r["deduped"] = True
-                else:
-                    dedup_err += 1
+        from core.maintenance import intake
+        account = getattr(provider, "user", None) or getattr(provider, "account", None) or "test@example.invalid"
+        intake(source="gmail_starred_matters", provider="gmail", account=account,
+               mailbox=STARRED_MAILBOX, rows=keepers)
     print("  [organize] matters: " + ", ".join(f"{m.split('/')[-1]}={n}"
                                                 for m, n in matters.most_common()))
     if apply:
@@ -209,13 +197,10 @@ def sweep_starred_noise(provider, limit, apply):
     keepers = [r for r in rows if _star_disposition(r) == "keep"]
     unstarred = err = 0
     if apply:
-        for r in noise:
-            if provider.unstar(r["uid"]):
-                unstarred += 1
-                r["unstarred"] = True
-            else:
-                err += 1
-                r["unstarred"] = False
+        from core.maintenance import intake
+        account = getattr(provider, "user", None) or getattr(provider, "account", None) or "test@example.invalid"
+        intake(source="gmail_starred_review", provider="gmail", account=account,
+               mailbox=STARRED_MAILBOX, rows=rows)
     tail = (f"  UNSTARRED={unstarred} (errors={err})" if apply else "  (dry run)")
     print(f"  [starred] {len(rows)} starred — noise(unstar)={len(noise)}  "
           f"keep={len(keepers)}{tail}")
@@ -235,6 +220,7 @@ def main(argv=None):
     ap.add_argument("--mailbox", default="INBOX")
     ap.add_argument("--apply", action="store_true",
                     help="actually flag/archive (default: dry run, no changes)")
+    ap.add_argument("--dispatch", help="exact approved canonical transaction envelope")
     ap.add_argument("--receipt", default=None, help="path to write the JSON receipt / undo manifest")
     ap.add_argument("--no-starred", dest="sweep_starred", action="store_false", default=True,
                     help="skip the residual-star sweep of [Gmail]/Starred (default: also sweep it)")
@@ -256,39 +242,12 @@ def main(argv=None):
         result = {"user": args.user, "mailbox": args.mailbox, "total": len(rows),
                   "mode": "apply" if args.apply else "dry_run", "rows": rows}
         if args.apply:
-            flagged = archived = ferr = aerr = 0
-            unstarred = uerr = 0
-            for r in rows:
-                if r["action"] == "fire" and not r["is_starred"]:
-                    if provider.star(r["uid"]):
-                        flagged += 1
-                    else:
-                        ferr += 1
-                elif r["action"] == "archive":
-                    if provider.archive(r["uid"]):
-                        archived += 1
-                        r["archived"] = True
-                    else:
-                        aerr += 1
-                        r["archived"] = False
-                    # Noise leaving the inbox loses its spurious star too, so the
-                    # flag pile converges with the inbox instead of stranding a
-                    # star on every archived newsletter (the "257 flag storm"
-                    # residue). Unstar is a \Flagged STORE — proven to work.
-                    if r["is_starred"]:
-                        if provider.unstar(r["uid"]):
-                            unstarred += 1
-                            r["unstarred"] = True
-                        else:
-                            uerr += 1
-                            r["unstarred"] = False
-            result.update(flagged=flagged, archived=archived, unstarred=unstarred,
-                          flag_errors=ferr, archive_errors=aerr, unstar_errors=uerr)
-            print(f"  APPLIED: flagged={flagged}  archived={archived}  "
-                  f"unstarred={unstarred}  "
-                  f"(errors: flag={ferr} archive={aerr} unstar={uerr})")
+            from core.maintenance import intake
+            result.update(intake(source="gmail_imap_sweep", provider="gmail", account=args.user,
+                                 mailbox=args.mailbox, rows=rows))
+            print("  Observations queued; flags and Inbox membership await an approved evidence plan.")
         else:
-            print("  DRY RUN — no changes. Re-run with --apply to execute.")
+            print("  DRY RUN — proposals only.")
 
         # Residual-star sweep: unstar noise that is starred but already out of the
         # inbox, so the flag pile fully drains (not just the inbox-resident stars).
@@ -303,6 +262,12 @@ def main(argv=None):
         with open(receipt, "w") as f:
             json.dump(result, f, indent=2, default=str)
         print(f"  receipt → {receipt}")
+        if args.dispatch:
+            from pathlib import Path
+            from core.maintenance import dispatch_approved
+            outcome = dispatch_approved(Path(args.dispatch))
+            print(json.dumps(outcome))
+            return 0 if outcome["status"] == "completed" else 2
         return 0
     finally:
         provider.disconnect()

@@ -47,6 +47,7 @@ from core.flag_policy import (
 SNAPSHOT_SCHEMA = "uma.flags.snapshot.v1"
 PUBLIC_RECEIPT_SCHEMA = "uma.flags.public_receipt.v1"
 PLAN_SCHEMA = "uma.flags.migration.plan.v5"
+EVIDENCE_PLAN_SCHEMA = "uma.flags.migration.plan.v6"
 PUBLIC_PLAN_SCHEMA = "uma.flags.migration.plan.public.v2"
 APPROVAL_SCHEMA = "uma.flags.approval.v4"
 CLASSIFICATION_PROOF_SCHEMA = "uma.flags.classification_proof.v1"
@@ -1243,9 +1244,10 @@ def validate_plan_snapshot_lineage(
             "plan.snapshot_sha256 does not match the supplied snapshot"
         )
 
-    rebuilt = build_plan(snapshot)
-    rebuilt["generated_at"] = plan["generated_at"]
-    rebuilt["plan_hash"] = compute_plan_hash(rebuilt)
+    rebuilt = build_plan(
+        snapshot, evidence=plan.get("evidence"),
+        generated_at=plan["generated_at"],
+    )
     if rebuilt != plan:
         raise FlagWorkflowError(
             "plan is not the complete canonical derivation of the supplied "
@@ -2109,7 +2111,8 @@ def _mutation_from_dict(d: Dict[str, Any], idx: int, *,
     return mutation
 
 
-def build_plan(snapshot: FlagSnapshot) -> Dict[str, Any]:
+def build_plan(snapshot: FlagSnapshot, *, evidence: Optional[Dict[str, Any]] = None,
+               generated_at: Optional[str] = None) -> Dict[str, Any]:
     """Build a plan bound to ONE snapshot. Refuses incomplete snapshots.
 
     Every mutation carries its DURABLE PRIVATE BINDING (provider/account/
@@ -2137,11 +2140,24 @@ def build_plan(snapshot: FlagSnapshot) -> Dict[str, Any]:
             f"{snapshot.hidden_by_limit}, inaccessible="
             f"{snapshot.inaccessible_count})"
         )
-    proposals: List[Proposal] = []
+    generated_at = generated_at or datetime.now(timezone.utc).isoformat()
+    decisions = None
+    if evidence is not None:
+        from core.evidence_flags import decisions_for_snapshot
+        decisions = decisions_for_snapshot(snapshot, evidence, generated_at)
+    proposals: List[Optional[Proposal]] = []
     for m in snapshot.messages:
-        proposals.append(propose(m.sender, m.subject, m.observed_flag))
+        if decisions is None:
+            proposals.append(propose(m.sender, m.subject, m.observed_flag))
+        else:
+            decision = decisions.get(m.ref_digest)
+            proposals.append(decision["proposal"] if decision else None)
     mutations: List[PlannedMutation] = []
     for m, p in zip(snapshot.messages, proposals):
+        # Unselected and explicitly protected identities are preserved. The
+        # complete evidence bundle records the reason; it is part of plan_hash.
+        if p is None:
+            continue
         if p.is_identity and p.reason_code == "no_change":
             continue
         if p.classification is None:  # pragma: no cover - propose guarantees it
@@ -2150,6 +2166,10 @@ def build_plan(snapshot: FlagSnapshot) -> Dict[str, Any]:
             MessageReference.compute_evidence_digest(
                 m.received_iso, m.sender, m.subject)
             if (m.received_iso or m.sender or m.subject) else None
+        )
+        message_id_digest = (
+            decisions[m.ref_digest]["reference"].message_id_digest
+            if decisions is not None else None
         )
         classification_proof = ClassificationProof.create(
             p.classification,
@@ -2170,7 +2190,7 @@ def build_plan(snapshot: FlagSnapshot) -> Dict[str, Any]:
             snapshot_id=snapshot.snapshot_id,
             observed_native_flag=m.native_index,
             evidence_digest=evidence_digest,
-            message_id_digest=None,
+            message_id_digest=message_id_digest,
         )
         identity_fields = {
             "ref_digest": m.ref_digest,
@@ -2208,7 +2228,7 @@ def build_plan(snapshot: FlagSnapshot) -> Dict[str, Any]:
             snapshot_id=snapshot.snapshot_id,
             observed_native_flag=m.native_index,
             evidence_digest=evidence_digest,
-            message_id_digest=None,
+            message_id_digest=message_id_digest,
         )
         validate_planned_mutation_contract(
             mutation,
@@ -2217,12 +2237,12 @@ def build_plan(snapshot: FlagSnapshot) -> Dict[str, Any]:
         )
         mutations.append(mutation)
     plan: Dict[str, Any] = {
-        "schema": PLAN_SCHEMA,
+        "schema": EVIDENCE_PLAN_SCHEMA if evidence is not None else PLAN_SCHEMA,
         "policy_version": MIGRATION_POLICY_VERSION,
         # Digest of the exact rule configuration used — tamper-evident
         # companion to the human-readable version string.
         "policy_sha256": POLICY_SHA256,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": generated_at,
         "snapshot_id": snapshot.snapshot_id,
         # Derive from to_dict(), never the possibly-stale dataclass field.
         "snapshot_sha256": current_snapshot_hash,
@@ -2237,6 +2257,8 @@ def build_plan(snapshot: FlagSnapshot) -> Dict[str, Any]:
             1 for mutation in mutations if mutation.auto_eligible
         ),
     }
+    if evidence is not None:
+        plan["evidence"] = evidence
     plan["plan_hash"] = compute_plan_hash(plan)
     return plan
 
@@ -2515,8 +2537,10 @@ def validate_plan_schema(plan: Dict[str, Any]) -> List[PlannedMutation]:
         "zero_write_declaration", "total_scanned", "mutations",
         "unchanged_count", "auto_eligible_count", "plan_hash",
     }
+    if plan.get("schema") == EVIDENCE_PLAN_SCHEMA:
+        required.add("evidence")
     _require_exact_keys(plan, required, "plan")
-    if plan.get("schema") != PLAN_SCHEMA:
+    if plan.get("schema") not in (PLAN_SCHEMA, EVIDENCE_PLAN_SCHEMA):
         raise FlagWorkflowError(
             f"plan schema must be {PLAN_SCHEMA}, got {plan.get('schema')!r}"
         )
@@ -2651,6 +2675,9 @@ def validate_plan_schema(plan: Dict[str, Any]) -> List[PlannedMutation]:
                 f"mutation {m.mutation_id}: auto-eligible mutation lacks "
                 "an evidence digest"
             )
+    if plan.get("schema") == EVIDENCE_PLAN_SCHEMA:
+        from core.evidence_flags import validate_evidence_plan
+        validate_evidence_plan(plan, parsed)
     return parsed
 
 

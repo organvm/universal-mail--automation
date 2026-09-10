@@ -255,7 +255,9 @@ _PROTOCOLS: List[ProtocolDef] = [
         "match": re.compile(r"(?ix) (\[[^\]]+·\s*hire\]\s*—?\s*inbound|"
                             r"recruiter|sourcing|talent\s*acquisition|talent\s*partner|"
                             r"role\s*at|position\s*at|hiring\s*for|"
-                            r"opportunity\s*(at|with)|in[\s-]?mail)"),
+                            r"opportunity\s*(at|with)|in[\s-]?mail|"
+                            r"(?:interview|chat\s+with)\b.*(?:\.ics|calendar|invitation|ashby)|"
+                            r"(?:needed|seeking)\s*:\s*.+)"),
         "priority": 76, "verify_first": False, "requires_reply": True,
         "next_step": "A recruiter wrote you FIRST — a warm hire lead. Reply by email, no "
                      "portal hoops: thank them, say you're interested, and ask for the JD, "

@@ -346,6 +346,9 @@ def classify_inbox(provider, inbox_name, limit, since_days=None):
                 "protected": protected,
                 "action": decide(sender, subject, cat.tier, protected, cat.label),
             }
+            snip = (getattr(m, "snippet", "") or getattr(m, "body", "") or "").strip()
+            if snip:
+                row["snippet"] = snip[:200]
             # Persist the bulk-signal headers (List-Unsubscribe / List-Id / Precedence …)
             # captured at fetch time so obligations_build can suppress bulk mail from the
             # reply-owed rung end-to-end. Omitted when the provider supplied none (fail-open).

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from core.envelope_policy import validate_envelope
 from core.mail_action_plan import MAIL_ACTION_PLAN_SCHEMA
 from core.mail_evidence_review import MailEvidenceReviewError, build_evidence_review
 
@@ -16,7 +17,8 @@ MAIL_DRAFT_PACKAGE_SCHEMA = "uma.mail.draft_package.v1"
 MAIL_DRAFT_CANDIDATE_SCHEMA = "uma.mail.draft_candidate.v1"
 
 DEFAULT_MAX_DRAFTS = 3
-DEFAULT_BODY_CHAR_LIMIT = 3000
+DEFAULT_BODY_CHAR_LIMIT = 750
+
 
 
 class MailDraftPackageError(ValueError):
@@ -145,6 +147,17 @@ def _draft_candidate(
     message = review.get("message") or {}
     evidence_id = message.get("evidence_id")
     draft_id = _hash("draft", action.get("id"), evidence_id, message.get("address"), message.get("subject"))
+    body = _draft_body(message, user_name=user_name)
+    envelope = validate_envelope(body)
+    fact_warnings = [
+        "Draft is template-generated from one private source message.",
+        "Verify current context before approving.",
+        "Approval is required before any send.",
+    ]
+    if not envelope.is_valid or envelope.warnings:
+        fact_warnings.extend(envelope.violations)
+        fact_warnings.extend(envelope.warnings)
+
     return {
         "schema": MAIL_DRAFT_CANDIDATE_SCHEMA,
         "draft_id": draft_id,
@@ -155,7 +168,13 @@ def _draft_candidate(
             "address": message.get("address"),
         },
         "subject": _reply_subject(message.get("subject")),
-        "body": _draft_body(message, user_name=user_name),
+        "body": body,
+        "envelope": {
+            "is_valid": envelope.is_valid,
+            "word_count": envelope.word_count,
+            "char_count": envelope.char_count,
+            "summary": envelope.summary(),
+        },
         "source_message": {
             "occurred_at": message.get("occurred_at"),
             "direction": message.get("direction"),
@@ -164,11 +183,7 @@ def _draft_candidate(
             "subject": message.get("subject"),
         },
         "fact_checklist": _fact_checklist(review),
-        "fact_warnings": [
-            "Draft is template-generated from one private source message.",
-            "Verify current context before approving.",
-            "Approval is required before any send.",
-        ],
+        "fact_warnings": fact_warnings,
         "approval": {
             "required": True,
             "approval_type": action.get("approval_type"),

@@ -177,6 +177,8 @@ LABEL_RULES: dict[str, LabelRuleDef] = {
             r"(^|@|\.)marcus\.com\b",     # not arbitrary 'marcus'
             r"(^|@|\.)regions\.com\b",    # not 'regions of Italy'
             r"(^|@|\.)pnc\.com\b",
+            r"^\+18005551234$",           # Example Twilio SMS shortcode for Bank
+            r"^#finance-alerts$",         # Example Slack channel for internal billing
         ],
         "priority": 7,
         "tier": 1,  # Critical - financial alerts

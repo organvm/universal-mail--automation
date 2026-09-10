@@ -275,61 +275,51 @@ class FlagMutation:
 
 
 @dataclass(frozen=True)
-class EmailMessage:
+class CommMessage:
+    """
+    Generalized representation of an async or sync communication interaction
+    (Email, SMS, Slack DM, etc.).
+    """
+    id: str
+    sender: str
+    subject: str
+    channel_id: str = "email"
+    date: Optional[datetime] = None
+    is_read: bool = False
+    is_starred: bool = False
+    priority_tier: Optional[int] = None
+    snippet: str = ""
+    body: str = ""
+
+    @property
+    def combined_text(self) -> str:
+        """Returns sender + subject combined for pattern matching."""
+        return f"{self.sender} {self.subject}".lower()
+
+    @property
+    def content_text(self) -> str:
+        """
+        Returns the richest available text for context research:
+        subject plus body (preferred) or snippet.
+        """
+        detail = self.body.strip() or self.snippet.strip()
+        if detail:
+            return f"{self.subject}\n\n{detail}".strip()
+        return self.subject
+
+
+@dataclass(frozen=True)
+class EmailMessage(CommMessage):
     """
     Provider-agnostic representation of an email message.
 
     Immutable dataclass containing the minimum fields needed for categorization
     and action decisions. Provider implementations extract these fields from
     their native message formats.
-
-    Attributes:
-        id: Provider-specific message identifier (Gmail ID, IMAP UID, etc.)
-        sender: The 'From' header value
-        subject: The 'Subject' header value
-        date: Message date (optional, for filtering/sorting)
-        labels: Current labels/folders on the message
-        is_read: Whether the message has been read
-        is_starred: Whether the message is starred/flagged (boolean, backward compat)
-        flag_color: The colored flag (FlagColor), NO_FLAG if unflagged
-        priority_tier: Eisenhower matrix tier (1=Critical, 2=Important, 3=Delegate, 4=Reference)
-        categories: Color categories (Outlook)
-        snippet: Short preview of the body (provider-supplied, optional)
-        body: Full plain-text body when fetched (optional; used for research)
-        headers: Cheap headers captured at list time, as a {name: value} map
-            (lower-cased names). The mailing-list / bulk / auto markers (list-unsubscribe,
-            list-id, list-post, precedence, auto-submitted) so the classifier can suppress
-            bulk mail from the reply-owed rung, PLUS reply-to so the draft leaf can prefer
-            the sender's stated reply address (see core.protocols.CAPTURE_HEADERS). Empty
-            when a provider does not (or cannot cheaply) supply headers — fail-open.
-        -- Separate classification axes (extendable, domain-agnostic) --
-        domain: Semantic domain/category (e.g., "Career", "Finance", "Legal")
-        semantic_type: Fine-grained semantic type within domain
-        operator_state: Current operator posture (maps to FlagColor)
-        urgency: Urgency level 0-10
-        next_action: Concrete next action description
-        due_at: Calendar-bound due date
-        follow_up_at: Follow-up date
-        confidence: Classification confidence 0.0-1.0
-        state_source: Source of state assignment
-        observed_flag: Flag color observed at fetch time
-        proposed_flag: Flag color proposed by automation
-        human_override: Whether human has overridden automation
-        message_id_digest: Stable RFC Message-ID digest for cross-provider identity
-        mutation_txn_id: Transaction/receipt ID for last mutation
     """
-    id: str
-    sender: str
-    subject: str
-    date: Optional[datetime] = None
     labels: Set[str] = field(default_factory=set)
-    is_read: bool = False
-    is_starred: bool = False
     flag_color: FlagColor = FlagColor.NO_FLAG
-    priority_tier: Optional[int] = None
     categories: Set[str] = field(default_factory=set)
-    snippet: str = ""
-    body: str = ""
     headers: Dict[str, str] = field(default_factory=dict)
     # Separate classification axes
     domain: Optional[str] = None
@@ -347,29 +337,26 @@ class EmailMessage:
     message_id_digest: Optional[str] = None
     mutation_txn_id: Optional[str] = None
 
-    @property
-    def combined_text(self) -> str:
-        """Returns sender + subject combined for pattern matching."""
-        return f"{self.sender} {self.subject}".lower()
-
-    @property
-    def content_text(self) -> str:
-        """
-        Returns the richest available text for context research:
-        subject plus body (preferred) or snippet. Used by core.research.
-        """
-        detail = self.body.strip() or self.snippet.strip()
-        if detail:
-            return f"{self.subject}\n\n{detail}".strip()
-        return self.subject
-
 
 class LabelActionValidationError(ValueError):
     """Raised when a LabelAction contains contradictory flag combinations."""
 
 
 @dataclass
-class LabelAction:
+class CommAction:
+    """
+    Generalized action applied to a communication message.
+    """
+    message_id: str
+    channel_id: str = "email"
+    sender: str = ""
+    archive: bool = False
+    star: bool = False
+    mark_read: bool = False
+
+
+@dataclass
+class LabelAction(CommAction):
     """
     Represents a label/folder/flag action to apply to a message.
 
@@ -393,8 +380,6 @@ class LabelAction:
         category_color: Color preset for the category (Outlook)
         due_date: Due date for flagged items (Outlook To Do integration)
     """
-    message_id: str
-    sender: str = ""
     add_labels: List[str] = field(default_factory=list)
     remove_labels: List[str] = field(default_factory=list)
     archive: bool = False

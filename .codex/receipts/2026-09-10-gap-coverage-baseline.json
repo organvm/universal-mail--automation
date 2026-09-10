@@ -62,7 +62,7 @@
     }
   ],
   "gmail_original_gaps_resolved": 4,
-  "gmail_gap_closure_receipt": "audit/evidence-workflow/gmail-gap-closure.json (f0585526… All Mail 116286 + 3 nested Personal/*, mailbox_writes=0)",
+  "gmail_gap_closure_receipt": "audit/evidence-workflow/gmail-gap-closure.json (f0585526\u2026 All Mail 116286 + 3 nested Personal/*, mailbox_writes=0)",
   "github": {
     "discovered_objects": 14746,
     "researched_objects": 30,
@@ -93,8 +93,24 @@
     "semantic_names_visible": true,
     "ordered_favorites_verified": true,
     "native_group_collapsed": true,
-    "order": ["NOW", "ACTION", "WAITING", "SCHEDULED", "REFERENCE", "REVIEW", "LATER"],
-    "visible_counts": [3, 23, 9, 1, 14, 162, 3],
+    "order": [
+      "NOW",
+      "ACTION",
+      "WAITING",
+      "SCHEDULED",
+      "REFERENCE",
+      "REVIEW",
+      "LATER"
+    ],
+    "visible_counts": [
+      3,
+      23,
+      9,
+      1,
+      14,
+      162,
+      3
+    ],
     "visible_flagged_total": 215
   },
   "rollout": {
@@ -116,5 +132,8 @@
   "automated_sends": 0,
   "scoped_tests_passed": 1672,
   "private_evidence_tracked": false,
-  "local_remote_parity": "head 978bd57 ahead of origin/feat/evidence-driven-mail by 1 (push requires explicit authorization per Rule #2)"
+  "local_remote_parity": "head a425d72 == origin/feat/evidence-driven-mail (pushed 2026-09-10, 0 ahead)",
+  "pushed_at": "2026-09-10T14:35:54-04:00",
+  "next_burst": ".venv/bin/python cli.py mail-research --input audit/evidence-workflow/gmail-corpus.json --output audit/evidence-workflow/research-gmail/manifest.json --resume audit/evidence-workflow/research-gmail/manifest.json --thread-limit 25 --work-units 1 --provider gmail --account padavano.anthony@gmail.com  (repeat; 600s ceiling shared, 25/20 caps, cursor 351->66189, 2634 units max, no creds in this session so blocked on IMAP_USER/IMAP_PASS or OP_ITEM)",
+  "validation_2026_09_10": "inventories 4/4 complete validated, corpus 4/4 sealed, research gmail 342/66189 next 351 remaining 65838, icloud/outlook 736/38/44 complete, reviews 13/38 outlook-dotted validated, gap-closure 4/4 mailbox_writes=0, tests 1672 passed"
 }

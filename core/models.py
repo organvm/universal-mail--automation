@@ -23,45 +23,20 @@ class ActionType(Enum):
 
 
 @dataclass(frozen=True)
-class EmailMessage:
+class CommMessage:
     """
-    Provider-agnostic representation of an email message.
-
-    Immutable dataclass containing the minimum fields needed for categorization
-    and action decisions. Provider implementations extract these fields from
-    their native message formats.
-
-    Attributes:
-        id: Provider-specific message identifier (Gmail ID, IMAP UID, etc.)
-        sender: The 'From' header value
-        subject: The 'Subject' header value
-        date: Message date (optional, for filtering/sorting)
-        labels: Current labels/folders on the message
-        is_read: Whether the message has been read
-        is_starred: Whether the message is starred/flagged
-        priority_tier: Eisenhower matrix tier (1=Critical, 2=Important, 3=Delegate, 4=Reference)
-        categories: Color categories (Outlook)
-        snippet: Short preview of the body (provider-supplied, optional)
-        body: Full plain-text body when fetched (optional; used for research)
-        headers: Cheap headers captured at list time, as a {name: value} map
-            (lower-cased names). The mailing-list / bulk / auto markers (list-unsubscribe,
-            list-id, list-post, precedence, auto-submitted) so the classifier can suppress
-            bulk mail from the reply-owed rung, PLUS reply-to so the draft leaf can prefer
-            the sender's stated reply address (see core.protocols.CAPTURE_HEADERS). Empty
-            when a provider does not (or cannot cheaply) supply headers — fail-open.
+    Generalized representation of an async or sync communication interaction
+    (Email, SMS, Slack DM, etc.).
     """
     id: str
     sender: str
     subject: str
+    channel_id: str = "email"
     date: Optional[datetime] = None
-    labels: Set[str] = field(default_factory=set)
     is_read: bool = False
-    is_starred: bool = False
     priority_tier: Optional[int] = None
-    categories: Set[str] = field(default_factory=set)
     snippet: str = ""
     body: str = ""
-    headers: Dict[str, str] = field(default_factory=dict)
 
     @property
     def combined_text(self) -> str:
@@ -72,7 +47,7 @@ class EmailMessage:
     def content_text(self) -> str:
         """
         Returns the richest available text for context research:
-        subject plus body (preferred) or snippet. Used by core.research.
+        subject plus body (preferred) or snippet.
         """
         detail = self.body.strip() or self.snippet.strip()
         if detail:
@@ -80,8 +55,36 @@ class EmailMessage:
         return self.subject
 
 
+@dataclass(frozen=True)
+class EmailMessage(CommMessage):
+    """
+    Provider-agnostic representation of an email message.
+
+    Immutable dataclass containing the minimum fields needed for categorization
+    and action decisions. Provider implementations extract these fields from
+    their native message formats.
+    """
+    labels: Set[str] = field(default_factory=set)
+    is_starred: bool = False
+    categories: Set[str] = field(default_factory=set)
+    headers: Dict[str, str] = field(default_factory=dict)
+
+
 @dataclass
-class LabelAction:
+class CommAction:
+    """
+    Generalized action applied to a communication message.
+    """
+    message_id: str
+    channel_id: str = "email"
+    sender: str = ""
+    archive: bool = False
+    star: bool = False
+    mark_read: bool = False
+
+
+@dataclass
+class LabelAction(CommAction):
     """
     Represents a label/folder action to apply to a message.
 
@@ -103,12 +106,8 @@ class LabelAction:
         category_color: Color preset for the category (Outlook)
         due_date: Due date for flagged items (Outlook To Do integration)
     """
-    message_id: str
-    sender: str = ""
     add_labels: List[str] = field(default_factory=list)
     remove_labels: List[str] = field(default_factory=list)
-    archive: bool = False
-    star: bool = False
     target_folder: Optional[str] = None
     category: Optional[str] = None
     category_color: Optional[str] = None

@@ -1,7 +1,7 @@
 schema_version: '1.0'
 repo: universal-mail--automation
 organ: III
-display_name: Email workflow automation and scheduling
+display_name: Universal Communications Synth (Mail, SMS & Event Automation)
 delivery:
 - platform: web_app
   status: not_started

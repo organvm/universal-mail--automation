@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Iterator, Dict, Any, Tuple, TYPE_CHECKING
 from enum import Flag, auto
 
-from core.models import EmailMessage, LabelAction, ProcessingResult
+from core.models import CommMessage, CommAction, EmailMessage, LabelAction, ProcessingResult
 from core.rules import is_protected_sender
 
 if TYPE_CHECKING:  # avoid any import-time coupling; AuditLog is duck-typed at runtime
@@ -35,10 +35,37 @@ class ProviderCapabilities(Flag):
     CATEGORIES = auto()           # Supports color categories (Outlook)
 
 
+class CommProviderCapabilities(Flag):
+    """
+    Flags indicating features supported by generalized communication providers.
+    """
+    NONE = 0
+    ASYNC_PULL = auto()      # IMAP, Outlook REST
+    SYNC_WEBHOOK = auto()    # Twilio SMS, Slack Events
+    REPLY_IN_THREAD = auto() # Slack, Email
+    REACTION = auto()        # Slack, Discord (equivalent to 'star')
+
+
+class CommProvider(ABC):
+    """
+    Base abstraction for a communication channel (Slack, Twilio, etc.).
+    """
+    name: str = "abstract_comm"
+    capabilities: CommProviderCapabilities = CommProviderCapabilities.NONE
+
+    @abstractmethod
+    def list_messages(self, query: str = "", limit: int = 100) -> 'ListMessagesResult':
+        pass
+
+    @abstractmethod
+    def apply_action(self, action: CommAction) -> bool:
+        pass
+
+
 @dataclass
 class ListMessagesResult:
     """Result from listing messages, including pagination info."""
-    messages: List[EmailMessage]
+    messages: List[CommMessage]
     next_page_token: Optional[str] = None
     total_estimate: Optional[int] = None
 

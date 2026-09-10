@@ -71,6 +71,7 @@ from mail_send_safety import (
     resolve_smtp_credentials,
     validate_attempt_id,
     validate_authorization_receipt,
+    validate_envelope,
 )
 from send_drafts import _attach, classify_attachments
 
@@ -696,6 +697,11 @@ def main(argv=None) -> int:
         default=60,
         help="seconds to wait for the Sent-mailbox verification (default 60)",
     )
+    ap.add_argument(
+        "--skip-envelope-check",
+        action="store_true",
+        help="bypass the email envelope length and anti-fluff policy checks",
+    )
     args = ap.parse_args(argv)
 
     if not 1 <= args.verify_timeout <= 300:
@@ -864,6 +870,21 @@ def main(argv=None) -> int:
         except (OSError, UnicodeError) as exc:
             print(f"mail-send: cannot read body file: {exc}", file=sys.stderr)
             return EXIT_FAIL_CLOSED
+
+        envelope_verdict = validate_envelope(body, attachments=ok_files)
+        if not args.skip_envelope_check and not envelope_verdict.is_valid:
+            print(
+                f"mail-send: refusing send — envelope policy violation: {'; '.join(envelope_verdict.violations)}",
+                file=sys.stderr,
+            )
+            if envelope_verdict.remedy:
+                print(f"mail-send: envelope remedy — {envelope_verdict.remedy}", file=sys.stderr)
+            print(
+                "mail-send: pass --skip-envelope-check to override the envelope policy gate",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL_CLOSED
+
         msg = build_message(
             creds,
             to,
@@ -891,6 +912,9 @@ def main(argv=None) -> int:
             print(f"mail-send: authorization refused: {exc}", file=sys.stderr)
             return EXIT_FAIL_CLOSED
         if not args.apply:
+            print(f"mail-send: envelope: {envelope_verdict.summary()}")
+            for w in envelope_verdict.warnings:
+                print(f"mail-send: envelope warning — {w}", file=sys.stderr)
             print(msg.as_string()[:4000])
             return EXIT_OK
         assert grant is not None

@@ -37,6 +37,12 @@ Global policy: /Users/4jp/AGENTS.md applies and cannot be overridden.
 - Gmail scope is `https://www.googleapis.com/auth/gmail.modify`; do not widen without review.
 - AppleScript tools operate on the local Mail app—close or pause them when running Gmail scripts to avoid conflicts.
 
+## Outbound Email & Envelope Policy
+- Adhere strictly to `docs/policies/email-envelope-doctrine.md`.
+- Emails are transmittal envelopes, not essays: target 30–90 words, max 120 words soft / 150 words hard ceiling.
+- Zero AI-generated fluff or throat-clearing clichés. All depth, data tables, and multi-topic analysis must reside in attachments/artifacts.
+
+
 <!-- ORGANVM:AUTO:START -->
 ## Agent Context (auto-generated — do not edit)
 

@@ -416,65 +416,19 @@ GMAIL_SETTLE = 20  # seconds to let each batch commit server-side
 
 
 def _flag_fires(account, inbox, fire_ids):
-    """Flag fires in one pass. Flagging is a status bit, not a label-move, so Gmail
-    respects it immediately and reliably (no revert)."""
-    if not fire_ids:
-        return 0, 0
-    flist = "{" + ", ".join(fire_ids) + "}"
-    _, out, _ = _osa(
-        f'''tell application "Mail"
-      set mb to mailbox "{inbox}" of account "{account}"
-      set fc to 0
-      set ec to 0
-      repeat with anId in {flist}
-        try
-          set flagged status of (first message of mb whose id is (anId as integer)) to true
-          set fc to fc + 1
-        on error
-          set ec to ec + 1
-        end try
-      end repeat
-      return (fc as string) & "," & (ec as string)
-    end tell''',
-        timeout=300,
-    )
-    try:
-        fc, ec = (int(x) for x in out.split(","))
-    except ValueError:
-        fc, ec = 0, 0
-    return fc, ec
+    """Compatibility intent; evidence and explicit transaction approval are required."""
+    from core.maintenance import intake
+    intake(source="_flag_fires", account=account, mailbox=inbox,
+           rows=[{"id": mid, "requested_operation": "flag_review"} for mid in fire_ids])
+    return 0, 0
 
 
 def _unflag_noise(account, inbox, unflag_ids):
-    """Clear the flag on messages the classifier no longer considers fires — the
-    residue of the earlier looks_human over-fire (and the dormant labeler's
-    Tech/Security auto-stars). Symmetric to _flag_fires: a keyless status-bit toggle
-    Gmail respects immediately (no revert). Reversible; the receipt records every id."""
-    if not unflag_ids:
-        return 0, 0
-    ulist = "{" + ", ".join(unflag_ids) + "}"
-    _, out, _ = _osa(
-        f'''tell application "Mail"
-      set mb to mailbox "{inbox}" of account "{account}"
-      set uc to 0
-      set ec to 0
-      repeat with anId in {ulist}
-        try
-          set flagged status of (first message of mb whose id is (anId as integer)) to false
-          set uc to uc + 1
-        on error
-          set ec to ec + 1
-        end try
-      end repeat
-      return (uc as string) & "," & (ec as string)
-    end tell''',
-        timeout=300,
-    )
-    try:
-        uc, ec = (int(x) for x in out.split(","))
-    except ValueError:
-        uc, ec = 0, 0
-    return uc, ec
+    """Compatibility intent; evidence and explicit transaction approval are required."""
+    from core.maintenance import intake
+    intake(source="_unflag_noise", account=account, mailbox=inbox,
+           rows=[{"id": mid, "requested_operation": "flag_review"} for mid in unflag_ids])
+    return 0, 0
 
 
 def _list_flagged(account, inbox):
@@ -506,145 +460,29 @@ def _list_flagged(account, inbox):
 
 
 def _archive_folder(account, inbox, arch_ids, noise_mailbox):
-    """Folder store (iCloud/IMAP): a single move out of INBOX archives. Sticks."""
-    if not arch_ids:
-        return 0, 0
-    _osa(
-        f'''tell application "Mail"
-      try
-        set mb to mailbox "{noise_mailbox}" of account "{account}"
-      on error
-        make new mailbox at end of mailboxes of account "{account}" with properties {{name:"{noise_mailbox}"}}
-      end try
-    end tell''',
-        timeout=60,
-    )
-    alist = "{" + ", ".join(arch_ids) + "}"
-    _, out, _ = _osa(
-        f'''tell application "Mail"
-      set mb to mailbox "{inbox}" of account "{account}"
-      set noiseMb to mailbox "{noise_mailbox}" of account "{account}"
-      set mc to 0
-      set ec to 0
-      repeat with anId in {alist}
-        try
-          set m to (first message of mb whose id is (anId as integer))
-          set read status of m to true
-          move m to noiseMb
-          set mc to mc + 1
-        on error
-          set ec to ec + 1
-        end try
-      end repeat
-      return (mc as string) & "," & (ec as string)
-    end tell''',
-        timeout=900,
-    )
-    try:
-        mc, ec = (int(x) for x in out.split(","))
-    except ValueError:
-        mc, ec = 0, 0
-    return mc, ec
+    """Compatibility intent; evidence and explicit transaction approval are required."""
+    from core.maintenance import intake
+    intake(source="_archive_folder", account=account, mailbox=inbox,
+           rows=[{"id": mid, "requested_operation": "archive_review"} for mid in arch_ids])
+    return 0, 0
 
 
 def _archive_gmail(account, inbox, arch_ids):
-    """Gmail: mailboxes are LABELS, not folders. A bulk move to a noise mailbox/All Mail
-    is optimistically applied locally then REVERTED on the next server sync (the INBOX
-    label re-asserts). The reliable gesture is to archive DIRECTLY to 'All Mail' (Gmail's
-    archive = drop the INBOX label) in SMALL batches, calling `synchronize` and settling
-    after each so every batch commits server-side before the next. Proven to stick where
-    the bulk move did not. Reversible: archived mail lives in All Mail and the JSON receipt
-    is the exact undo manifest (sender/subject/id of everything moved)."""
-    want = {int(i) for i in arch_ids}
-    if not want:
-        return 0, 0
-    script = f'''tell application "Mail"
-      set acc to account "{account}"
-      set amBox to missing value
-      repeat with b in (every mailbox of acc)
-        if name of b is "All Mail" then
-          set amBox to b
-          exit repeat
-        end if
-      end repeat
-      if amBox is missing value then return "0,0"
-      set inb to mailbox "{inbox}" of account "{account}"
-      set targetIds to {{{", ".join(str(i) for i in want)}}}
-      set mc to 0
-      set ec to 0
-      set iter to 0
-      repeat
-        set iter to iter + 1
-        if iter > 40 then exit repeat
-        set inboxIds to (id of every message of inb)
-        set todo to {{}}
-        repeat with t in targetIds
-          if inboxIds contains (t as integer) then set end of todo to (t as integer)
-        end repeat
-        if (count of todo) is 0 then exit repeat
-        set n to 0
-        repeat with aid in todo
-          if n ≥ {GMAIL_BATCH} then exit repeat
-          try
-            move (first message of inb whose id is (aid as integer)) to amBox
-            set n to n + 1
-            set mc to mc + 1
-          on error
-            set ec to ec + 1
-          end try
-        end repeat
-        synchronize with acc
-        delay {GMAIL_SETTLE}
-      end repeat
-      return (mc as string) & "," & (ec as string)
-    end tell'''
-    # Generous timeout: up to ~40 sync cycles of GMAIL_SETTLE seconds each.
-    _, out, _ = _osa(script, timeout=max(900, 40 * (GMAIL_SETTLE + 5)))
-    try:
-        mc, ec = (int(x) for x in out.split(","))
-    except ValueError:
-        mc, ec = 0, 0
-    return mc, ec
+    """Compatibility intent; evidence and explicit transaction approval are required."""
+    from core.maintenance import intake
+    intake(source="_archive_gmail", account=account, mailbox=inbox,
+           rows=[{"id": mid, "requested_operation": "archive_review"} for mid in arch_ids])
+    return 0, 0
 
 
 def apply(account, inbox, rows, noise_mailbox, flag_only_gmail=False):
-    """Flag the fires (surface obligations) and archive the noise out of the inbox,
-    reversibly. Branches by store type: Gmail (label store) archives directly to All
-    Mail in synced small batches that actually stick; iCloud/IMAP (folder store) use a
-    single move to the reversible noise mailbox. Fires are flagged in place either way.
+    """Submit legacy observations to canonical research; execute only approved plans.
 
-    flag_only_gmail: for the autonomic heartbeat — skip the heavy/futile Gmail bulk-archive
-    loop (Gmail archive is currently gated on a write door, L-MCP/L-OAUTH/L-IMAP-APP-PW) but
-    STILL flag the Gmail fires (reliable status bit) and STILL archive folder stores
-    (iCloud/Outlook, reliable). Keeps the beat bounded and fast without ever dead-stopping."""
-    fire_ids = [str(r["id"]) for r in rows if r["action"] == "fire" and not r["is_flagged"]]
-    arch_ids = [str(r["id"]) for r in rows if r["action"] == "archive"]
-    # Symmetric to flagging: a message that is flagged but the classifier now calls
-    # noise (archive) gets its flag CLEARED, so the flag pile converges to "flagged
-    # ⟺ fire" every beat instead of accreting the over-fire residue. Only 'archive'
-    # is unflagged — a flagged 'keep' (protected/ambiguous) is left as the user set it.
-    unflag_ids = [str(r["id"]) for r in rows if r["action"] == "archive" and r["is_flagged"]]
-    is_gmail = _account_is_gmail(account)
-
-    fc, fe = _flag_fires(account, inbox, fire_ids)
-    uc, ue = _unflag_noise(account, inbox, unflag_ids)
-    if is_gmail:
-        mc, me = (0, 0) if flag_only_gmail else _archive_gmail(account, inbox, arch_ids)
-    else:
-        mc, me = _archive_folder(account, inbox, arch_ids, noise_mailbox)
-
-    return {
-        "flag_requested": len(fire_ids),
-        "unflag_requested": len(unflag_ids),
-        "archive_requested": len(arch_ids),
-        "is_gmail": is_gmail,
-        "flag_only_gmail": flag_only_gmail,
-        "flagged": fc,
-        "unflagged": uc,
-        "archived": mc,
-        "errors": fe + ue + me,
-        "applescript": f"flagged={fc} unflagged={uc} archived={mc} err={fe + ue + me}",
-    }
+    Neither a category nor a subject establishes completed work. The account,
+    mailbox, local message IDs and original hints remain in the evidence store.
+    """
+    from core.maintenance import intake
+    return intake(source="inbox_sweep", account=account, mailbox=inbox, rows=rows)
 
 
 def unflag_backlog_run(account, inbox, do_apply, receipt_path=None):
@@ -681,11 +519,13 @@ def unflag_backlog_run(account, inbox, do_apply, receipt_path=None):
         "keep": len(keep),
     }
     if do_apply:
-        uc, ue = _unflag_noise(account, inbox, [d["id"] for d in noise])
-        result.update({"unflagged": uc, "errors": ue})
-        print(f"\n  done: un-flagged {uc}, errors {ue}")
+        from core.maintenance import intake
+        result.update(intake(source="unflag_backlog", account=account, mailbox=inbox,
+                             rows=[{**row, "requested_operation": "flag_review"} for row in decided]))
+        print("\n  Flag review queued; existing flags preserved until an evidence plan is approved.")
     else:
-        print("\n  DRY RUN — no flags changed. Re-run with --apply to execute.")
+        print("\n  DRY RUN — flag review proposals only.")
+
     receipt = receipt_path or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "audit", f"unflag_backlog-{account.replace('@', '_at_')}.json"
     )
@@ -700,7 +540,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Phase-0 Apple Mail inbox sweep (dry run by default).")
     ap.add_argument("--account", required=True)
     ap.add_argument("--limit", type=int, default=2000)
-    ap.add_argument("--apply", action="store_true", help="actually flag/move (default: dry run)")
+    ap.add_argument("--apply", action="store_true", help="submit observations to canonical research")
+    ap.add_argument("--dispatch", help="exact approved canonical transaction envelope")
     ap.add_argument(
         "--flag-only-gmail",
         action="store_true",
@@ -741,7 +582,7 @@ def main(argv=None):
     if args.apply:
         n = sum(1 for r in rows if r["action"] == "archive")
         mode = "flag-only-gmail" if args.flag_only_gmail else "full"
-        print(f"\n  APPLYING [{mode}] (flag fires; move {n} noise → '{args.noise_mailbox}')…")
+        print(f"\n  Submitting [{mode}] observations ({n} archive proposals) for evidence review…")
         result.update(apply(args.account, inbox, rows, args.noise_mailbox, flag_only_gmail=args.flag_only_gmail))
         print(f"  done: {result}")
     else:
@@ -754,6 +595,12 @@ def main(argv=None):
     with open(receipt, "w") as f:
         json.dump({"result": result, "rows": rows}, f, indent=2)
     print(f"  receipt → {receipt}")
+    if args.dispatch:
+        from pathlib import Path
+        from core.maintenance import dispatch_approved
+        outcome = dispatch_approved(Path(args.dispatch))
+        print(json.dumps(outcome))
+        return 0 if outcome["status"] == "completed" else 2
     return 0
 
 

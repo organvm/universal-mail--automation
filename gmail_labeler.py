@@ -22,9 +22,6 @@ import gmail_auth
 # Import shared rules and state from core module
 from core.rules import (
     LABEL_RULES,
-    PRIORITY_LABELS,
-    KEEP_IN_INBOX,
-    is_protected_sender,
     categorize_message as _core_categorize,
 )
 from core.state import StateManager
@@ -45,7 +42,7 @@ BATCH_GET_SIZE = 20    # Number of 'get' requests per HTTP batch (tuned to reduc
 BATCH_MODIFY_SIZE = 1000 # Max IDs per batchModify call (API limit is 1000)
 LIST_PAGE_SIZE = 500    # Max messages to list per page (API max 500)
 BASE_BACKOFF_SECONDS = 10  # Initial delay when backing off rate limits
-SYSTEM_LABELS = ["STARRED"]  # System labels we may apply (flags)
+SYSTEM_LABELS = []  # Workflow labels are exclusively owned by evidence transactions.
 
 # Setup Logging
 logging.basicConfig(
@@ -96,35 +93,10 @@ class GmailLabeler:
         return gmail_auth.build_gmail_service(scopes=SCOPES)
 
     def _init_labels(self):
-        """Pre-fetch all label IDs to avoid API calls during processing."""
-        logger.info("Initializing label cache...")
-        results = self.service.users().labels().list(userId="me").execute()
-        existing_labels = {l["name"]: l["id"] for l in results.get("labels", [])}
-
-        # User labels required by rules.
-        for name in LABEL_RULES.keys():
-            if name in existing_labels:
-                self.label_cache[name] = existing_labels[name]
-            else:
-                # Create if missing
-                logger.info(f"Creating missing label: {name}")
-                label_object = {"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"}
-                created = self.service.users().labels().create(userId="me", body=label_object).execute()
-                self.label_cache[name] = created["id"]
-        
-        # System labels we might apply (e.g., STARRED)
-        for sys_name in SYSTEM_LABELS:
-            if sys_name in existing_labels:
-                self.label_cache[sys_name] = existing_labels[sys_name]
-        
-        # Ensure Uncategorized exists in cache to enable removal when reassigning.
-        if "Uncategorized" not in self.label_cache and "Uncategorized" in existing_labels:
-            self.label_cache["Uncategorized"] = existing_labels.get("Uncategorized")
-            
-        # Ensure the configured remove_source_label exists in cache if provided
-        if self.remove_source_label and self.remove_source_label not in self.label_cache:
-             if self.remove_source_label in existing_labels:
-                 self.label_cache[self.remove_source_label] = existing_labels.get(self.remove_source_label)
+        """Read category identities; label creation is an explicit planned operation."""
+        self.account = self.service.users().getProfile(userId="me").execute()["emailAddress"]
+        result = self.service.users().labels().list(userId="me").execute()
+        self.label_cache = {row["name"]: row["id"] for row in result.get("labels", [])}
 
     def categorize_message(self, headers):
         """Categorize based on headers using shared core rules."""
@@ -181,93 +153,34 @@ class GmailLabeler:
                         logger.error(f"Retry failed for message {msg_id}: {e}")
                 time.sleep(1.0)
 
-        # 2. Categorize & Group Modifications
-        # Map: (add_label_id, remove_label_id) -> [msg_ids]
-        modifications = defaultdict(list)
-        uncategorized_id = self.label_cache.get("Uncategorized")
-        
-        # Get ID for dynamic removal if configured
-        remove_source_id = None
-        if self.remove_source_label:
-            remove_source_id = self.label_cache.get(self.remove_source_label)
-
+        # Preserve categorization as bounded, reviewable user-label proposals.
+        # Inbox, flags, read state and unrelated metadata are never implied by a label.
+        from core.maintenance import intake, category_labels
+        rows = []
         for msg_id, data in batch_results.items():
-            if not data: continue
-            
-            headers = data.get('payload', {}).get('headers', [])
-            label_name = self.categorize_message(headers)
-            from_hdr = next(
-                (h.get("value", "") for h in headers if h.get("name", "").lower() == "from"), ""
-            )
-
-            # Update stats
-            self.stats[label_name] += 1
-            
-            # Determine Action
-            target_label_id = self.label_cache.get(label_name)
-            
-            # If we don't have a label or it categorized to the "Misc/Other" (fallback),
-            # and we are *processing* Misc/Other, we probably don't want to add Misc/Other again?
-            # Actually, if it falls back to Misc/Other, we might as well leave it alone if it's already there.
-            if not target_label_id:
+            if not data:
                 continue
-
-            add_list = [target_label_id]
-            # Add system priority labels (e.g., STARRED) for selected categories.
-            if label_name in PRIORITY_LABELS:
-                star_id = self.label_cache.get("STARRED")
-                if star_id:
-                    add_list.append(star_id)
-
-            remove_list = []
-            
-            # Logic: If putting into specific category, remove 'Uncategorized' if present
-            if uncategorized_id and label_name != "Uncategorized":
-                remove_list.append(uncategorized_id)
-            
-            # Logic: If user specified a source label to remove (e.g. Misc/Other), remove it
-            # BUT only if we found a match that is NOT the source label.
-            if remove_source_id and label_name != self.remove_source_label:
-                remove_list.append(remove_source_id)
-
-            # Logic: ARCHIVE (Remove INBOX) if not in retention list AND the sender
-            # is not protected (fail-closed never-archive gate — a blank/unparseable
-            # From is treated as protected and kept in inbox).
-            if label_name not in KEEP_IN_INBOX and not is_protected_sender(from_hdr):
-                remove_list.append('INBOX')
-            
-            add_ids = tuple(add_list)
-            remove_ids = tuple(remove_list)
-            
-            modifications[(add_ids, remove_ids)].append(msg_id)
-
-        # 3. Batch Modify
-        # Process modifications in chunks of 1000
-        ops_count = 0
-        for (add, remove), msg_ids in modifications.items():
-            # Chunk ids
-            id_chunks = [msg_ids[i:i + BATCH_MODIFY_SIZE] for i in range(0, len(msg_ids), BATCH_MODIFY_SIZE)]
-            
-            for id_chunk in id_chunks:
-                body = {
-                    "ids": id_chunk,
-                    "addLabelIds": list(add),
-                    "removeLabelIds": list(remove)
-                }
-                try:
-                    self._execute_with_backoff(
-                        lambda: self.service.users().messages().batchModify(userId="me", body=body).execute(),
-                        "batch modify"
-                    )
-                    ops_count += len(id_chunk)
-                except HttpError as e:
-                    logger.error(f"Batch modify failed: {e}")
-                time.sleep(0.5)
-        
+            headers = data.get("payload", {}).get("headers", [])
+            label_name = self.categorize_message(headers)
+            self.stats[label_name] += 1
+            remove = []
+            if label_name != "Uncategorized" and "Uncategorized" in self.label_cache:
+                remove.append("Uncategorized")
+            if self.remove_source_label and label_name != self.remove_source_label:
+                remove.append(self.remove_source_label)
+            add, remove = category_labels([label_name], remove)
+            rows.append({"id": msg_id, "headers": headers, "label": label_name,
+                         "requested_operation": "category_labels", "add": add, "remove": remove,
+                         "missing_labels": [name for name in add if name not in self.label_cache]})
+        if rows:
+            outcome = intake(source="gmail_labeler", provider="gmail", account=self.account,
+                             mailbox="query:" + getattr(self, "query", "has:nouserlabels"), rows=rows)
+            logger.info("Queued %s category proposals for canonical review", outcome["queued"])
         return len(batch_results)
 
     def run(self, query="has:nouserlabels"):
-        logger.info(f"Starting run. Query: {query}")
+        logger.info(f"Starting category observation. Query: {query}")
+        self.query = query
         
         # Note on Page Tokens: 
         # When processing a queue (e.g., removing labels so they no longer match the query),
@@ -353,9 +266,16 @@ class GmailLabeler:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Gmail Labeling Automation")
     parser.add_argument("--query", type=str, default="has:nouserlabels", help="Gmail query to filter messages (default: has:nouserlabels)")
+    parser.add_argument("--dispatch", help="exact approved canonical transaction envelope")
     parser.add_argument("--remove-label", type=str, help="Label to remove if a new category is found (e.g., 'Misc/Other')")
     
     args = parser.parse_args()
     
     app = GmailLabeler(remove_source_label=args.remove_label)
     app.run(query=args.query)
+    if args.dispatch:
+        from pathlib import Path
+        from core.maintenance import dispatch_approved
+        outcome = dispatch_approved(Path(args.dispatch))
+        print(json.dumps(outcome))
+        raise SystemExit(0 if outcome["status"] == "completed" else 2)

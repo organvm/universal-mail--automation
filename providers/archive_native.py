@@ -41,14 +41,26 @@ class GmailArchive:
             raise ValueError("Gmail message identity mismatch")
         raw = base64.urlsafe_b64decode(record["raw"] + "=" * (-len(record["raw"]) % 4))
         header, separator, _ = raw.partition(b"\r\n\r\n")
-        if not separator or sha256_hex({"headers": (header + separator).decode("utf-8", errors="replace")}) != mutation["identity"]["evidence_digest"]:
-            raise ValueError("Gmail header evidence changed")
+        content = hashlib.sha256(raw).hexdigest()
+        content_reader = getattr(self.guard, "content_evidence", None)
+        if callable(content_reader):
+            evidence = content_reader(mutation["identity"])
+            if (evidence.get("identity") != mutation["identity"]
+                    or evidence.get("header_representation") != "imap_header_same_fetch"
+                    or evidence.get("native_headers_sha256") != mutation["identity"]["evidence_digest"]
+                    or evidence.get("raw_sha256") != content):
+                raise ValueError("Gmail native full-content research evidence changed")
+        elif not separator or sha256_hex({"headers": (header + separator).decode("utf-8", errors="replace")}) != mutation["identity"]["evidence_digest"]:
+            # Compatibility for callers whose inventory used the RAW header
+            # representation itself. A folded-header mismatch NEVER passes
+            # without the validated same-FETCH research receipt above.
+            raise ValueError("Gmail header evidence changed; validated native research receipt required")
         labels = sorted(record["labelIds"])
         guard = self.guard(mutation["identity"])
         return {"identity": mutation["identity"], "server_confirmed": True, "message_present": True,
                 "in_inbox": "INBOX" in labels, "label_ids": labels, "revision": str(record["historyId"]),
-                "content_sha256": hashlib.sha256(raw).hexdigest(),
-                "preserved_sha256": sha256_hex({"content": hashlib.sha256(raw).hexdigest(),
+                "content_sha256": content,
+                "preserved_sha256": sha256_hex({"content": content,
                                                  "labels": [label for label in labels if label != "INBOX"]}),
                 "protected": guard["protected"], "human_override": guard["human_override"],
                 "archive_destination": "All Mail", "id_format": mutation["before"].get("id_format", "hex")}

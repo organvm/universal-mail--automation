@@ -9,8 +9,9 @@ Worktrees: one worktree per active working branch. Do not pile unrelated WIP ont
 | Branch | Purpose | Merge into | Green means |
 | --- | --- | --- | --- |
 | `main` | Production-true trunk. Always releasable. | tags / releases | required CI + tests pass; purpose invariants hold |
+| `lane/verify` | Proof: correctness, tests, contracts, CI, reproducibility | `main` | verification suite is stricter or equally true |
 | `lane/heal` | Repair of known broken or rotting behavior | `main` | previously failing paths pass, no regression |
-| `lane/expand` | Complete already-stated scope | `main` | new coverage is verified, not merely sketched |
+| `lane/expand-providers` | Completing the stated coverage (Gmail, Outlook, Mail.app, SMS) | `main` | new coverage is verified, not merely sketched |
 | `lane/evolve` | Structural improvement implied by current purpose | `main` | behavior preserved except for documented changes |
 
 ## Working branches (temporary)

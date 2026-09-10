@@ -22,32 +22,68 @@ import secrets
 import sys
 import time
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.audit import AuditLog
 
 from core.rules import (
     LABEL_RULES,
-    PRIORITY_LABELS,
-    KEEP_IN_INBOX,
-    PRIORITY_TIERS,
-    categorize_message,
     categorize_with_tier,
     should_star,
     should_keep_in_inbox,
     is_vip_sender,
     is_protected_sender,
-    is_time_sensitive,
     escalate_by_age,
     calculate_email_age_hours,
     get_tier_config,
 )
 from core import __version__
 from core.state import StateManager
-from core.models import LabelAction, ProcessingResult
+from core.models import EmailMessage, LabelAction, ProcessingResult, FlagColor
 from core.config import load_config, apply_vip_senders_from_config
 from providers.base import EmailProvider, ProviderCapabilities
+
+
+def _positive_int_arg(value: str) -> int:
+    """Argparse type for bounds that must never produce empty/future scans."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected a positive integer, got {value!r}"
+        ) from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(
+            f"expected a positive integer, got {value!r}"
+        )
+    return parsed
+
+
+def _first_canary_limit_arg(value: str) -> int:
+    """Argparse type for the permanently bounded first activation path."""
+    parsed = _positive_int_arg(value)
+    if parsed > 3:
+        raise argparse.ArgumentTypeError(
+            f"first activation canary limit must be within [1,3], got {value!r}"
+        )
+    return parsed
+
+
+def _nonempty_arg(value: str) -> str:
+    """Argparse type for scope components that must identify a real value."""
+    if not value.strip():
+        raise argparse.ArgumentTypeError("expected a non-empty value")
+    return value
+
+
+def _require_flags_mailbox(args: argparse.Namespace, command: str) -> bool:
+    """Defense-in-depth for direct handler calls that bypass argparse."""
+    mailbox = getattr(args, "mailbox", None)
+    if not isinstance(mailbox, str) or not mailbox.strip():
+        print(f"flags {command}: --mailbox must be non-empty", file=sys.stderr)
+        return False
+    return True
 
 # Logging setup
 logging.basicConfig(
@@ -141,6 +177,28 @@ def get_provider(
         raise ValueError(f"Unknown provider: {provider_name}")
 
 
+def _load_message_details(
+    provider: EmailProvider,
+    messages: list[EmailMessage],
+) -> Dict[str, EmailMessage]:
+    """Fetch message details while excluding provider-level misses."""
+    message_ids = [message.id for message in messages]
+    if hasattr(provider, "batch_get_details"):
+        return {
+            message_id: detail
+            for message_id, detail in provider.batch_get_details(
+                message_ids
+            ).items()
+            if detail is not None
+        }
+    details: Dict[str, EmailMessage] = {}
+    for message in messages:
+        detail = provider.get_message_details(message.id)
+        if detail is not None:
+            details[message.id] = detail
+    return details
+
+
 def run_labeler(
     provider: EmailProvider,
     query: str,
@@ -169,6 +227,7 @@ def run_labeler(
         ProcessingResult with statistics
     """
     has_categories = provider.capabilities & ProviderCapabilities.CATEGORIES
+    can_star = bool(provider.capabilities & ProviderCapabilities.STAR)
     vip_count = 0
     non_vip_skipped = 0
     protected_count = 0  # trust receipt: protected senders skipped (never archived)
@@ -199,11 +258,9 @@ def run_labeler(
                 break
 
             # Get message details
-            msg_ids = [m.id for m in list_result.messages]
-            if hasattr(provider, 'batch_get_details'):
-                details = provider.batch_get_details(msg_ids)
-            else:
-                details = {m.id: provider.get_message_details(m.id) for m in list_result.messages}
+            details = _load_message_details(
+                provider, list_result.messages
+            )
 
             # Categorize and prepare actions
             actions = []
@@ -262,7 +319,7 @@ def run_labeler(
                         action.target_folder = tier_config.folder
 
                     # Star based on tier config
-                    if tier_config.star:
+                    if tier_config.star and can_star:
                         action.star = True
 
                     # Archive based on tier config
@@ -270,7 +327,7 @@ def run_labeler(
                         action.archive = True
                 else:
                     # Legacy behavior
-                    if should_star(label):
+                    if should_star(label) and can_star:
                         action.star = True
 
                     if not should_keep_in_inbox(label):
@@ -518,6 +575,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         print("## Label Counts")
         for label in sorted(LABEL_RULES.keys()):
             try:
+                count: int | str
                 if args.provider == "gmail":
                     result = provider.list_messages(f"label:{label}", limit=1)
                     count = result.total_estimate or 0
@@ -590,11 +648,7 @@ def cmd_summary(args: argparse.Namespace) -> int:
             print("No messages found.")
             return 0
 
-        msg_ids = [m.id for m in list_result.messages]
-        if hasattr(provider, 'batch_get_details'):
-            details = provider.batch_get_details(msg_ids)
-        else:
-            details = {m.id: provider.get_message_details(m.id) for m in list_result.messages}
+        details = _load_message_details(provider, list_result.messages)
 
         for msg_id, msg in details.items():
             if not msg:
@@ -693,11 +747,7 @@ def cmd_pending(args: argparse.Namespace) -> int:
             print("No pending items found.")
             return 0
 
-        msg_ids = [m.id for m in list_result.messages]
-        if hasattr(provider, 'batch_get_details'):
-            details = provider.batch_get_details(msg_ids)
-        else:
-            details = {m.id: provider.get_message_details(m.id) for m in list_result.messages}
+        details = _load_message_details(provider, list_result.messages)
 
         for msg_id, msg in details.items():
             if not msg:
@@ -788,11 +838,9 @@ def cmd_vip(args: argparse.Namespace) -> int:
         )
 
         if list_result.messages:
-            msg_ids = [m.id for m in list_result.messages]
-            if hasattr(provider, 'batch_get_details'):
-                details = provider.batch_get_details(msg_ids)
-            else:
-                details = {m.id: provider.get_message_details(m.id) for m in list_result.messages}
+            details = _load_message_details(
+                provider, list_result.messages
+            )
 
             for msg_id, msg in details.items():
                 if not msg:
@@ -879,6 +927,7 @@ def cmd_escalate(args: argparse.Namespace) -> int:
     )
 
     has_categories = provider.capabilities & ProviderCapabilities.CATEGORIES
+    can_star = bool(provider.capabilities & ProviderCapabilities.STAR)
     # Trust receipt on the escalate path too: escalate only raises tier today, but
     # it funnels through apply_actions (the gate) and the receipt makes that
     # coverage provable — and future-proofs the path if target_folder ever moves
@@ -904,11 +953,7 @@ def cmd_escalate(args: argparse.Namespace) -> int:
             return 0
 
         # Get message details
-        msg_ids = [m.id for m in list_result.messages]
-        if hasattr(provider, 'batch_get_details'):
-            details = provider.batch_get_details(msg_ids)
-        else:
-            details = {m.id: provider.get_message_details(m.id) for m in list_result.messages}
+        details = _load_message_details(provider, list_result.messages)
 
         actions = []
         for msg_id, msg in details.items():
@@ -956,7 +1001,7 @@ def cmd_escalate(args: argparse.Namespace) -> int:
                         action.target_folder = new_tier_config.folder
 
                     # Star if tier requires it
-                    if new_tier_config.star:
+                    if new_tier_config.star and can_star:
                         action.star = True
 
                     actions.append(action)
@@ -1027,11 +1072,7 @@ def cmd_triage(args: argparse.Namespace) -> int:
             print("No messages found.")
             return 0
 
-        msg_ids = [m.id for m in list_result.messages]
-        if hasattr(provider, "batch_get_details"):
-            details = provider.batch_get_details(msg_ids)
-        else:
-            details = {m.id: provider.get_message_details(m.id) for m in list_result.messages}
+        details = _load_message_details(provider, list_result.messages)
 
         messages = [m for m in details.values() if m]
 
@@ -2086,6 +2127,1101 @@ def cmd_mail_delivery_receipt(args: argparse.Namespace) -> int:
     return 0
 
 
+# =============================================================================
+# FLAGS COMMAND HANDLERS — Seven-color workflow state for Mail.app
+# =============================================================================
+
+def cmd_flags_doctor(args: argparse.Namespace) -> int:
+    """Diagnose Mail.app colored flag capability and configuration.
+
+    Read-only. Does NOT call the unbounded list_messages path.
+    Reports: scripting property detection, read capability (inferred from
+    provider construction), native mapping source, write capability
+    (implemented but not live-tested), and live round-trip status.
+    """
+    if args.provider != "mailapp":
+        print("flags doctor: only supported for mailapp provider", file=sys.stderr)
+        return 1
+
+    try:
+        provider = get_provider(
+            args.provider,
+            account=args.account,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"flags doctor: provider unavailable: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with provider:
+            # 1. Scripting property detection
+            if not (
+                provider.capabilities & ProviderCapabilities.COLORED_FLAGS
+            ):
+                print("✗ COLORED_FLAGS capability not declared by provider")
+                return 1
+            print("✓ Scripting property: COLORED_FLAGS declared")
+            print(f"  Provider: {provider.name}")
+            print(f"  Capabilities: {provider.capabilities}")
+
+            # 2. Read capability — inferred from provider construction, NOT
+            # by calling the unbounded list_messages path.
+            print(
+                "✓ Read capability: implemented "
+                "(provider constructed successfully)"
+            )
+
+            # 3. Native mapping source
+            print(
+                "\n  Native mapping source: "
+                "providers/flag_codecs.py MAILAPP_INDEX_TO_FLAG"
+            )
+            print("  Flag Color Mapping (Mail.app flag index):")
+            from providers.flag_codecs import MAILAPP_INDEX_TO_FLAG
+            for index in sorted(MAILAPP_INDEX_TO_FLAG):
+                fc = MAILAPP_INDEX_TO_FLAG[index]
+                print(
+                    f"    {index:>3} = {fc.name_str:<12} "
+                    f"({fc.operator_posture})"
+                )
+
+            # 4. Write capability — implemented but NOT live-tested
+            print("\n  Write capability: implemented (not live-tested)")
+            print("  Clear/unflag capability: implemented (not live-tested)")
+
+            # 5. Live round-trip status
+            print("  Live round-trip: NOT performed (doctor is read-only)")
+            print(
+                "\n  To test read capability live, use: "
+                "flags audit --flagged-only"
+            )
+            print(
+                "  To prepare the bounded write canary, use: flags apply "
+                "--canary --dry-run with exact plan, snapshot, and approval "
+                "artifacts (unrestricted apply remains disabled)"
+            )
+            return 0
+    except (OSError, RuntimeError) as exc:
+        print(f"flags doctor: connection failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_flags_audit(args: argparse.Namespace) -> int:
+    """Read-only inventory of flagged messages.
+
+    Delegates ALL enumeration to the provider and ALL artifact handling to
+    core.flag_workflow. A private snapshot (mode 0600) is ALWAYS written —
+    including for failed/incomplete scans, so failure evidence is durable.
+    --receipt writes the PUBLIC-SAFE projection only (allowlist fields).
+
+    Exit codes: 0 complete (or partial accepted via --allow-partial) |
+    20 incomplete without --allow-partial | 1 provider/config error.
+
+    Rendering is mutually exclusive: json OR csv OR table — never mixed,
+    so machine-readable output stays parseable.
+    """
+    if args.provider != "mailapp":
+        print("flags audit: only supported for mailapp provider", file=sys.stderr)
+        return 1
+    if not _require_flags_mailbox(args, "audit"):
+        return 2
+
+    estate_mode = bool(getattr(args, "estate", False))
+    account = getattr(args, "account", None)
+    if not estate_mode and (
+        not isinstance(account, str) or not account.strip()
+    ):
+        print(
+            "flags audit: --account is required unless --estate is used",
+            file=sys.stderr,
+        )
+        return 2
+
+    from providers.mailapp import MailAppProvider
+    from core import flag_workflow
+
+    logger.info(
+        f"Auditing mailbox {args.mailbox} "
+        f"(flagged_only={args.flagged_only}, limit={args.limit})"
+    )
+
+    def failed_snapshot(error: str) -> flag_workflow.FlagSnapshot:
+        """Durable private evidence for failures before enumeration returns."""
+        return flag_workflow.build_snapshot(
+            provider_name=args.provider,
+            account="<estate>" if estate_mode else (account or "<missing>"),
+            mailbox="unavailable estate" if estate_mode else args.mailbox,
+            rows=[],
+            complete=False,
+            scope_complete=False,
+            status="failed",
+            errors=[error],
+            inaccessible_count=0,
+            timeout_count=0,
+            unknown_index_count=0,
+            limit=args.limit,
+            since_days=args.since_days,
+            total_matched=0,
+            returned_count=0,
+            hidden_by_limit=0,
+        )
+
+    try:
+        provider = get_provider(args.provider, account=args.account)
+    except (OSError, RuntimeError, ValueError) as exc:
+        snapshot = failed_snapshot(f"provider construction failed: {exc}")
+    else:
+        if not isinstance(provider, MailAppProvider):
+            print("flags audit: mailapp provider required", file=sys.stderr)
+            return 1
+        try:
+            with provider:
+                if estate_mode:
+                    # Estate mode returns a typed aggregate even when
+                    # discovery or an individual surface fails.
+                    estate = flag_workflow.enumerate_estate(
+                        provider,
+                        per_surface_limit=args.limit,
+                        since_days=args.since_days,
+                    )
+                else:
+                    result = provider.enumerate_flagged(
+                        mailbox=args.mailbox,
+                        limit=args.limit,
+                        since_days=args.since_days,
+                    )
+        except (OSError, RuntimeError) as exc:
+            snapshot = failed_snapshot(f"provider connection failed: {exc}")
+        else:
+            try:
+                if estate_mode:
+                    snapshot = flag_workflow.build_estate_snapshot(
+                        estate, provider_name=provider.name
+                    )
+                else:
+                    snapshot = flag_workflow.build_snapshot(
+                        provider_name=provider.name,
+                        account=account or "<missing>",
+                        mailbox=args.mailbox,
+                        rows=result.rows,
+                        complete=result.complete,
+                        scope_complete=result.scope_complete,
+                        status=result.status,
+                        errors=result.errors,
+                        inaccessible_count=result.inaccessible_count,
+                        timeout_count=result.timeout_count,
+                        unknown_index_count=result.unknown_index_count,
+                        limit=args.limit,
+                        since_days=args.since_days,
+                        total_matched=result.scanned_boundary.get(
+                            "total_flagged_seen", len(result.rows)
+                        ),
+                        returned_count=len(result.rows),
+                        hidden_by_limit=result.scanned_boundary.get(
+                            "hidden_by_limit", 0
+                        ),
+                        next_cursor=result.next_cursor,
+                    )
+            except flag_workflow.FlagWorkflowError as exc:
+                print(f"flags audit: invalid scan evidence: {exc}", file=sys.stderr)
+                return 20
+    snap_dir = Path(
+        os.environ.get(
+            "UMA_FLAGS_STATE_DIR",
+            str(Path.home() / ".local" / "share" / "uma" / "flags"),
+        )
+    ) / "snapshots"
+    try:
+        snap_path = flag_workflow.write_private_snapshot(snapshot, snap_dir)
+    except (flag_workflow.FlagWorkflowError, OSError) as exc:
+        print(
+            f"flags audit: private evidence could not be persisted: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    # ALL completeness decisions derive uniformly from the SNAPSHOT —
+    # identical code path for single-surface and estate modes.
+    incomplete = not snapshot.complete
+    if incomplete and not getattr(args, "allow_partial", False):
+        print(
+            f"flags audit: {snapshot.status.upper()} scan "
+            f"({len(snapshot.errors)} errors, "
+            f"{snapshot.inaccessible_count} inaccessible rows, "
+            f"{snapshot.timeout_count} timeouts, "
+            f"{snapshot.hidden_by_limit} hidden by limit). "
+            "Private evidence snapshot was still written. This is NOT a "
+            "full inventory and MUST NOT be treated as an empty mailbox. "
+            "Re-run with --allow-partial to accept the partial report.",
+            file=sys.stderr,
+        )
+        for err in snapshot.errors:
+            print(f"  error: {err}", file=sys.stderr)
+        print(f"  snapshot: {snap_path}", file=sys.stderr)
+        return 20
+
+    # Operational metadata goes to STDERR so --output json/csv stays pure
+    # machine-readable output on STDOUT.
+    print(f"Private snapshot (mode 0600): {snap_path}", file=sys.stderr)
+    print(f"Snapshot id: {snapshot.snapshot_id}  status: {snapshot.status}",
+          file=sys.stderr)
+    print(f"Content hash: {snapshot.content_hash}", file=sys.stderr)
+    if snapshot.next_cursor:
+        print(f"Resume cursor: {snapshot.next_cursor}", file=sys.stderr)
+
+    # Prepare the optional public projection before rendering stdout. A
+    # receipt failure therefore cannot leave apparently successful machine
+    # output behind.
+    if args.receipt:
+        try:
+            public = snapshot.to_public_safe()
+            receipt_path = Path(args.receipt).expanduser()
+            receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(receipt_path, "w") as receipt_file:
+                json.dump(public, receipt_file, indent=2, allow_nan=False)
+        except (flag_workflow.FlagWorkflowError, OSError, TypeError, ValueError) as exc:
+            print(f"flags audit: public receipt failed: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"Public-safe receipt written to: {args.receipt}",
+            file=sys.stderr,
+        )
+
+    # Display layer — MUTUALLY EXCLUSIVE rendering.
+    display_rows = [
+        {
+            "id": m.provider_id,
+            "sender": m.sender,
+            "subject": m.subject,
+            "flag_index": m.native_index,
+            "flag_color": m.observed_flag.name_str,
+            "operator_posture": m.observed_flag.operator_posture,
+        }
+        for m in snapshot.messages
+    ]
+    if args.output == "json":
+        print(json.dumps(snapshot.to_dict(), indent=2, allow_nan=False))
+    elif args.output == "csv":
+        _print_csv(display_rows)
+    else:
+        if not display_rows and snapshot.complete:
+            print("No flagged messages found in scope.")
+        elif display_rows:
+            _print_audit_table(display_rows, args.flagged_only)
+
+    return 0
+
+
+def _print_audit_table(rows: list, flagged_only: bool):
+    """Print audit results as a table."""
+    if not rows:
+        print("No messages found.")
+        return
+
+    title = "FLAGGED MESSAGES AUDIT" if flagged_only else "MAILBOX AUDIT"
+    print(f"\n{'=' * 80}")
+    print(f"{title} — {len(rows)} messages")
+    print(f"{'=' * 80}")
+
+    from collections import Counter
+    color_counts = Counter(r.get("flag_color", "unknown") for r in rows)
+    for color, count in sorted(color_counts.items(), key=lambda x: -x[1]):
+        print(f"  {color}: {count}")
+
+    print()
+    for r in rows:
+        flag = r.get("flag_color", "?")
+        sender = r.get("sender", "")[:40]
+        subject = r.get("subject", "")[:50]
+        print(f"  [{flag:<12}] {sender:<40} {subject}")
+
+    print(f"{'=' * 80}\n")
+
+
+def _print_csv(rows: list):
+    """Print audit results as CSV."""
+    import csv
+    import sys
+    writer = csv.writer(sys.stdout)
+    writer.writerow([
+        "id", "sender", "subject", "flag_color", "operator_posture",
+    ])
+    for r in rows:
+        writer.writerow([
+            r.get("id", ""),
+            r.get("sender", ""),
+            r.get("subject", ""),
+            r.get("flag_color", ""),
+            r.get("operator_posture", ""),
+        ])
+
+
+def cmd_flags_plan(args: argparse.Namespace) -> int:
+    """Generate migration/reclassification plan — ARTIFACT-ONLY.
+
+    Commit 5 contract: this command REQUIRES --snapshot <private.json> and
+    NEVER instantiates or connects a provider. There is NO live-rescan
+    fallback; planning from a live Mail.app scan is structurally impossible
+    here (the provider/enumeration symbols are not referenced at all).
+
+    The snapshot is revalidated semantically on load (a valid hash over
+    impossible content is rejected), and the produced plan is bound to the
+    full snapshot hash plus the policy digest.
+    """
+    if not args.output:
+        print("flags plan: --output is required", file=sys.stderr)
+        return 1
+
+    from core import flag_workflow
+
+    snap_arg = getattr(args, "snapshot", None)
+    if not snap_arg:
+        # argparse enforces required=True; this is defense in depth.
+        print("flags plan: --snapshot is required "
+              "(planning never rescans Mail.app)", file=sys.stderr)
+        return 2
+    snap_path = Path(snap_arg).expanduser()
+    if not snap_path.is_file():
+        print(f"flags plan: snapshot not found: {snap_path}",
+              file=sys.stderr)
+        return 1
+
+    try:
+        snapshot = flag_workflow.load_snapshot(snap_path)
+        plan = flag_workflow.build_plan(snapshot)
+        plan_path = flag_workflow.write_private_plan(
+            plan,
+            Path(args.output).expanduser(),
+        )
+    except flag_workflow.FlagWorkflowError as e:
+        # Tampered hashes, semantically invalid snapshots, and incomplete
+        # snapshots are all structurally plan-ineligible.
+        print(f"flags plan: {e}", file=sys.stderr)
+        return 20
+
+    mutations = plan["mutations"]
+    review_only = sum(1 for m in mutations if m["review_required"])
+    auto_eligible = sum(1 for m in mutations if m["auto_eligible"])
+    print(f"\nMigration Plan Generated: {plan_path}")
+    print(f"  Plan Hash (full sha256): {plan['plan_hash']}")
+    print(f"  Snapshot Hash (full sha256): {plan['snapshot_sha256']}")
+    print(f"  Policy Version: {plan['policy_version']}")
+    print(f"  Policy Digest (sha256): {plan['policy_sha256']}")
+    print(f"  Total Scanned: {plan['total_scanned']}")
+    print(f"  Unchanged: {plan['unchanged_count']}")
+    print(f"  To Recolor: {len(mutations)}")
+    print(f"  Review-only (apply-ineligible): {review_only}/{len(mutations)}")
+    print(f"  Auto-classified (Commit 6 approval+preflight gate applies): "
+          f"{auto_eligible}/{len(mutations)}")
+    print("  NOTE: planning performs zero writes. Only the explicit "
+          "1..3-message --canary path can consume an exact current approval; "
+          "unrestricted apply remains disabled (exit 89).")
+    return 0
+
+
+def cmd_flags_queue(args: argparse.Namespace) -> int:
+    """Show the seven queues plus an explicit UNKNOWN evidence surface."""
+    if args.provider != "mailapp":
+        print("flags queue: only supported for mailapp provider", file=sys.stderr)
+        return 1
+    if not _require_flags_mailbox(args, "queue"):
+        return 2
+    account = getattr(args, "account", None)
+    if not isinstance(account, str) or not account.strip():
+        print("flags queue: --account is required", file=sys.stderr)
+        return 2
+
+    from providers.mailapp import MailAppProvider
+
+    try:
+        provider = get_provider(args.provider, account=args.account)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"flags queue: provider unavailable: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(provider, MailAppProvider):
+        print("flags queue: mailapp provider required", file=sys.stderr)
+        return 1
+
+    logger.info(f"Building flags queue for {args.mailbox} (limit={args.limit})")
+
+    try:
+        with provider:
+            result = provider.enumerate_flagged(
+                mailbox=args.mailbox,
+                limit=args.limit,
+            )
+    except (OSError, RuntimeError) as exc:
+        print(f"flags queue: enumeration failed: {exc}", file=sys.stderr)
+        return 1
+
+    if not result.complete:
+        print(
+            f"flags queue: refusing {result.status} enumeration "
+            f"({len(result.errors)} errors, "
+            f"{result.inaccessible_count} inaccessible rows, "
+            f"{result.timeout_count} timeouts, "
+            f"{result.scanned_boundary.get('hidden_by_limit', 0)} hidden "
+            "by limit)",
+            file=sys.stderr,
+        )
+        return 20
+
+    queue_order = [
+        FlagColor.RED,
+        FlagColor.ORANGE,
+        FlagColor.YELLOW,
+        FlagColor.GREEN,
+        FlagColor.BLUE,
+        FlagColor.PURPLE,
+        FlagColor.GRAY,
+        FlagColor.UNKNOWN,
+    ]
+    queue_data: Dict[FlagColor, list] = {fc: [] for fc in queue_order}
+
+    for r in result.rows:
+        fc = r.flag_color
+        if fc in queue_data:
+            queue_data[fc].append(r)
+
+    if args.output == "json":
+        import json
+        output = {
+            fc.queue_label: [
+                {
+                    "id": row.provider_id,
+                    "account": row.account,
+                    "mailbox": row.mailbox,
+                    "sender": row.sender,
+                    "subject": row.subject,
+                    "native_index": row.native_index,
+                    "flag_color": row.flag_color.value,
+                    "received_iso": row.received_iso,
+                }
+                for row in queue_data[fc]
+            ]
+            for fc in queue_order
+        }
+        print(json.dumps(output, indent=2))
+        return 0
+
+    print(f"\n{'=' * 80}")
+    print(f"FLAGS QUEUE — {args.mailbox} ({sum(len(v) for v in queue_data.values())} flagged)")
+    print(f"{'=' * 80}")
+
+    for fc in queue_order:
+        items = queue_data[fc]
+        if not items:
+            continue
+        print(f"\n  {fc.queue_label} ({fc.name_str}) — {len(items)}")
+        print(f"  {'-' * 76}")
+        for r in items[:20]:
+            sender = (r.sender or "")[:35]
+            subject = (r.subject or "")[:45]
+            print(f"    {sender:<35} {subject}")
+        if len(items) > 20:
+            print(f"    ... +{len(items) - 20} more")
+
+    print(f"\n{'=' * 80}\n")
+    return 0
+
+
+def cmd_flags_human_canary_approve(args: argparse.Namespace) -> int:
+    """Create one exact, private human-canary approval with zero writes.
+
+    This is deliberately an artifact-only authority step.  It cannot inspect
+    a mailbox, select a wildcard, or change any classifier field.  The later
+    apply command must still be invoked with both ``--canary`` and
+    ``--human-selected`` and will rerun its full fresh preflight.
+    """
+    if getattr(args, "canary", False) is not True or \
+            getattr(args, "human_selected", False) is not True:
+        print(
+            "flags human-canary-approve: explicit --canary and "
+            "--human-selected are required; no provider was constructed.",
+            file=sys.stderr,
+        )
+        return 89
+
+    from core.flag_workflow import (
+        ApprovalReceipt,
+        FlagWorkflowError,
+        HumanCanaryTarget,
+        human_canary_text_risk_blocker,
+        load_plan,
+        load_snapshot,
+        validate_plan_snapshot_lineage,
+        write_private_approval,
+    )
+
+    nominations = getattr(args, "nominate", None)
+    if not isinstance(nominations, list) or not (1 <= len(nominations) <= 3):
+        print(
+            "flags human-canary-approve: provide exactly 1..3 --nominate "
+            "values (mutation_id:ref_digest:temporary_flag)",
+            file=sys.stderr,
+        )
+        return 20
+    if len(nominations) != len(set(nominations)):
+        print(
+            "flags human-canary-approve: duplicate exact nominations are "
+            "forbidden",
+            file=sys.stderr,
+        )
+        return 20
+
+    try:
+        targets = []
+        for index, value in enumerate(nominations):
+            parts = value.split(":")
+            if len(parts) != 3:
+                raise FlagWorkflowError(
+                    "--nominate must be mutation_id:ref_digest:temporary_flag"
+                )
+            targets.append(HumanCanaryTarget.from_dict({
+                "mutation_id": parts[0],
+                "ref_digest": parts[1],
+                "temporary_flag": parts[2],
+            }, f"nominate[{index}]"))
+        if len({target.mutation_id for target in targets}) != len(targets):
+            raise FlagWorkflowError(
+                "human canary nominations must name distinct mutations"
+            )
+        snapshot = load_snapshot(Path(args.snapshot).expanduser())
+        plan = load_plan(Path(args.plan).expanduser())
+        mutations = validate_plan_snapshot_lineage(plan, snapshot)
+        mutations_by_id = {
+            mutation.mutation_id: mutation for mutation in mutations
+        }
+        messages_by_provider_id = {
+            message.provider_id: message for message in snapshot.messages
+        }
+        for target in targets:
+            mutation = mutations_by_id.get(target.mutation_id)
+            message = (
+                messages_by_provider_id.get(mutation.provider_id)
+                if mutation is not None else None
+            )
+            if message is None:
+                raise FlagWorkflowError(
+                    f"{target.mutation_id}: snapshot message is absent"
+                )
+            blocker = human_canary_text_risk_blocker(
+                message.sender, message.subject
+            )
+            if blocker is not None:
+                raise FlagWorkflowError(
+                    f"{target.mutation_id}: human canary target refused: "
+                    f"{blocker}"
+                )
+        approval = ApprovalReceipt.create_human_canary(
+            plan_hash=plan["plan_hash"],
+            snapshot_sha256=plan["snapshot_sha256"],
+            policy_sha256=plan["policy_sha256"],
+            nominated_targets=targets,
+            approving_operator=args.operator,
+            canary_limit=len(targets),
+            ttl_seconds=args.ttl_seconds,
+        )
+        output = write_private_approval(
+            approval, Path(args.output).expanduser(), plan=plan
+        )
+    except (FlagWorkflowError, OSError, TypeError, ValueError) as exc:
+        print(
+            f"flags human-canary-approve: refused: {exc}",
+            file=sys.stderr,
+        )
+        return 20
+
+    print(json.dumps({
+        "schema": "uma.flags.human_canary_approval.public.v1",
+        "selection_source": approval.selection_source,
+        "purpose": approval.purpose,
+        "manual_canary": approval.manual_canary,
+        "message_count": len(targets),
+        "approved_mutation_ids": approval.approved_mutation_ids,
+        "message_ref_digests": [target.ref_digest for target in targets],
+        "temporary_flags": [target.temporary_flag.value for target in targets],
+        "snapshot_sha256": approval.snapshot_sha256,
+        "plan_sha256": approval.plan_hash,
+        "policy_sha256": approval.policy_sha256,
+        "approval_sha256": approval.content_hash,
+        "approval_path": str(output),
+        "live_writes_performed": 0,
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_flags_apply(args: argparse.Namespace) -> int:
+    """Prepare or execute one explicitly approved Mail.app canary."""
+    if getattr(args, "canary", False) is not True:
+        print(
+            "NOT_READY: unrestricted flags apply is disabled; explicit "
+            "--canary is required and no provider was constructed.",
+            file=sys.stderr,
+        )
+        return 89
+    if getattr(args, "provider", None) != "mailapp":
+        print(
+            "flags apply: canary activation supports only mailapp",
+            file=sys.stderr,
+        )
+        return 20
+
+    from core.flag_activation import (
+        CanaryRollbackBundle,
+        default_flags_state_dir,
+        load_canary_activation,
+        make_transaction_engine,
+        persist_canary_material,
+        redacted_canary_proposal,
+        validate_canary_output_paths,
+        write_public_canary_proposal,
+    )
+    from core.flag_workflow import FlagWorkflowError
+
+    required = ("plan", "snapshot", "approval")
+    missing = [
+        f"--{name}" for name in required
+        if not getattr(args, name, None)
+    ]
+    if missing:
+        print(
+            f"flags apply: missing required artifact(s): {', '.join(missing)}",
+            file=sys.stderr,
+        )
+        return 20
+
+    try:
+        activation = load_canary_activation(
+            plan_path=Path(args.plan).expanduser(),
+            snapshot_path=Path(args.snapshot).expanduser(),
+            approval_path=Path(args.approval).expanduser(),
+            cli_limit=getattr(args, "limit", 3),
+            human_selected=getattr(args, "human_selected", False),
+        )
+        requested_account = getattr(args, "account", None)
+        if requested_account is not None \
+                and requested_account != activation.scope[1]:
+            raise FlagWorkflowError(
+                "CLI account does not match the approved plan scope"
+            )
+        bundle = CanaryRollbackBundle.create(activation)
+        state_dir = default_flags_state_dir()
+        receipt_output = (
+            Path(args.receipt_output).expanduser()
+            if getattr(args, "receipt_output", None)
+            else None
+        )
+        proposal_output = (
+            Path(args.proposal_output).expanduser()
+            if getattr(args, "proposal_output", None)
+            else None
+        )
+        validate_canary_output_paths(
+            activation=activation,
+            bundle=bundle,
+            state_dir=state_dir,
+            plan_input=Path(args.plan).expanduser(),
+            snapshot_input=Path(args.snapshot).expanduser(),
+            approval_input=Path(args.approval).expanduser(),
+            receipt_output=receipt_output,
+            proposal_output=proposal_output,
+        )
+        material = persist_canary_material(
+            activation,
+            bundle,
+            state_dir,
+            receipt_output,
+        )
+        engine, _ledger = make_transaction_engine(state_dir)
+    except (FlagWorkflowError, OSError, TypeError, ValueError) as exc:
+        print(f"flags apply: activation refused: {exc}", file=sys.stderr)
+        return 20
+
+    print(
+        f"Private rollback bundle: {material['rollback']}",
+        file=sys.stderr,
+    )
+
+    try:
+        provider = get_provider("mailapp", account=activation.scope[1])
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"flags apply: provider unavailable: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with provider:
+            preflight = engine.preflight_transaction(
+                plan=activation.plan,
+                approval=activation.approval,
+                provider=provider,
+            )
+            proposal = redacted_canary_proposal(activation, bundle)
+            proposal["preflight_status"] = preflight.status
+            proposal["preflight_target_count"] = len(preflight.verified)
+            proposal["writes_performed"] = 0
+            if preflight.status != "preflight_passed":
+                proposal["error_code"] = "canary_preflight_refused"
+                print(json.dumps(proposal, indent=2, sort_keys=True))
+                return 20
+
+            if proposal_output is not None:
+                write_public_canary_proposal(
+                    proposal, proposal_output
+                )
+
+            if getattr(args, "dry_run", False):
+                proposal["status"] = "canary_ready_for_approval"
+                proposal["rollback_receipt_ready"] = True
+                print(json.dumps(proposal, indent=2, sort_keys=True))
+                return 0
+
+            result = engine.apply_canary_transaction(
+                plan=activation.plan,
+                approval=activation.approval,
+                provider=provider,
+                max_count=activation.cli_limit,
+            )
+    except FlagWorkflowError as exc:
+        print(f"flags apply: activation refused: {exc}", file=sys.stderr)
+        return 20
+    except (OSError, RuntimeError) as exc:
+        print(f"flags apply: provider failure: {exc}", file=sys.stderr)
+        return 1
+
+    output = redacted_canary_proposal(activation, bundle)
+    output["status"] = result.status
+    output["writes_performed"] = result.writes_performed
+    output["verified_count"] = len(result.verified)
+    output["error_code"] = (
+        None if result.status == "applied"
+        else "canary_apply_not_verified"
+    )
+    output["rollback_receipt_ready"] = True
+    print(json.dumps(output, indent=2, sort_keys=True))
+    if (
+        result.status != "applied"
+        or result.writes_performed != len(activation.selected)
+        or len(result.verified) != len(activation.selected)
+    ):
+        return 20
+    return 0
+
+
+def cmd_flags_rollback(args: argparse.Namespace) -> int:
+    """Prepare or execute rollback for one exact canary bundle."""
+    if getattr(args, "canary", False) is not True:
+        print(
+            "NOT_READY: unrestricted flags rollback is disabled; explicit "
+            "--canary is required and no provider was constructed.",
+            file=sys.stderr,
+        )
+        return 89
+    if getattr(args, "provider", None) != "mailapp":
+        print(
+            "flags rollback: canary rollback supports only mailapp",
+            file=sys.stderr,
+        )
+        return 20
+
+    from core.flag_activation import (
+        default_flags_state_dir,
+        load_canary_rollback,
+        make_rollback_engine,
+    )
+    from core.flag_workflow import FlagWorkflowError, validate_plan_schema
+
+    required = ("plan", "snapshot", "approval", "receipt")
+    missing = [
+        f"--{name}" for name in required
+        if not getattr(args, name, None)
+    ]
+    if missing:
+        print(
+            "flags rollback: missing required artifact(s): "
+            f"{', '.join(missing)}",
+            file=sys.stderr,
+        )
+        return 20
+    try:
+        plan, _snapshot, bundle = load_canary_rollback(
+            plan_path=Path(args.plan).expanduser(),
+            snapshot_path=Path(args.snapshot).expanduser(),
+            approval_path=Path(args.approval).expanduser(),
+            receipt_path=Path(args.receipt).expanduser(),
+            human_selected=getattr(args, "human_selected", False),
+        )
+        mutations = {
+            mutation.mutation_id: mutation
+            for mutation in validate_plan_schema(plan)
+        }
+        first = mutations[bundle.receipts[0].mutation_id]
+        requested_account = getattr(args, "account", None)
+        if requested_account is not None \
+                and requested_account != first.account:
+            raise FlagWorkflowError(
+                "CLI account does not match the rollback plan scope"
+            )
+        engine = make_rollback_engine(default_flags_state_dir(), plan)
+    except (FlagWorkflowError, OSError, TypeError, ValueError) as exc:
+        print(f"flags rollback: refused: {exc}", file=sys.stderr)
+        return 20
+
+    try:
+        provider = get_provider("mailapp", account=first.account)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"flags rollback: provider unavailable: {exc}", file=sys.stderr)
+        return 1
+    try:
+        with provider:
+            result = engine.rollback_transactions(
+                receipts=bundle.receipts,
+                provider=provider,
+                max_count=3,
+                preflight_only=getattr(args, "dry_run", False),
+            )
+    except FlagWorkflowError as exc:
+        print(f"flags rollback: refused: {exc}", file=sys.stderr)
+        return 20
+    except (OSError, RuntimeError) as exc:
+        print(f"flags rollback: provider failure: {exc}", file=sys.stderr)
+        return 1
+
+    output = {
+        "schema": "uma.flags.canary.rollback_result.public.v1",
+        "canary_id": bundle.canary_id,
+        "message_count": len(bundle.receipts),
+        "plan_sha256": bundle.plan_sha256,
+        "snapshot_sha256": bundle.snapshot_sha256,
+        "policy_sha256": bundle.policy_sha256,
+        "approval_sha256": bundle.approval_sha256,
+        "selection_source": bundle.selection_source,
+        "purpose": bundle.purpose,
+        "manual_canary": bundle.manual_canary,
+        "rollback_bundle_sha256": bundle.content_hash,
+        "status": result.status,
+        "writes_performed": result.writes_performed,
+        "verified_restored_count": sum(
+            row.get("status") == "rolled_back"
+            for row in result.results
+        ),
+        "already_rolled_back_count": sum(
+            row.get("status") == "already_rolled_back"
+            for row in result.results
+        ),
+        "not_applied_count": sum(
+            row.get("status") == "not_applied"
+            for row in result.results
+        ),
+        "failed_count": len(result.failed),
+        "unattempted_count": len(result.unattempted),
+        "error_code": (
+            None
+            if result.status in {
+                "preflight_passed", "rolled_back", "already_rolled_back",
+                "rollback_not_required",
+            }
+            else "canary_rollback_not_verified"
+        ),
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    accepted = (
+        {
+            "preflight_passed", "already_rolled_back",
+            "rollback_not_required",
+        }
+        if getattr(args, "dry_run", False)
+        else {
+            "rolled_back", "already_rolled_back",
+            "rollback_not_required",
+        }
+    )
+    return 0 if result.status in accepted else 20
+
+
+def cmd_flags_overrides(args: argparse.Namespace) -> int:
+    """List POLICY DISAGREEMENTS between legacy policy and current state.
+
+    HONEST LABELING: this is a heuristic policy-disagreement preview, NOT
+    human-override detection. True override detection requires persisted
+    automation state (core.flag_workflow.OverrideStore) and lands with the
+    apply/ledger work.
+    """
+    if args.provider != "mailapp":
+        print("flags overrides: only supported for mailapp provider", file=sys.stderr)
+        return 1
+    if not _require_flags_mailbox(args, "overrides"):
+        return 2
+    account = getattr(args, "account", None)
+    if not isinstance(account, str) or not account.strip():
+        print("flags overrides: --account is required", file=sys.stderr)
+        return 2
+
+    from providers.mailapp import MailAppProvider
+    from core import flag_policy
+
+    try:
+        provider = get_provider(args.provider, account=args.account)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"flags overrides: provider unavailable: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(provider, MailAppProvider):
+        print("flags overrides: mailapp provider required", file=sys.stderr)
+        return 1
+
+    try:
+        with provider:
+            result = provider.enumerate_flagged(
+                mailbox=args.mailbox,
+                limit=args.limit,
+            )
+    except (OSError, RuntimeError) as exc:
+        print(f"flags overrides: enumeration failed: {exc}", file=sys.stderr)
+        return 1
+
+    if not result.complete:
+        print(
+            f"flags overrides: refusing {result.status} enumeration "
+            f"({len(result.errors)} errors, "
+            f"{result.inaccessible_count} inaccessible rows, "
+            f"{result.timeout_count} timeouts, "
+            f"{result.scanned_boundary.get('hidden_by_limit', 0)} hidden "
+            "by limit)",
+            file=sys.stderr,
+        )
+        return 20
+
+    disagreements = []
+    for r in result.rows:
+        proposal = flag_policy.propose(r.sender, r.subject, r.flag_color)
+        if not proposal.is_identity and proposal.reason_code != "purple_review":
+            disagreements.append({
+                "id": r.provider_id,
+                "sender": r.sender,
+                "subject": r.subject[:60],
+                "observed_flag": r.flag_color.name_str,
+                "policy_proposes": proposal.proposed_flag.name_str,
+                "reason_code": proposal.reason_code,
+            })
+
+    print(f"\n{'=' * 80}")
+    print(f"POLICY DISAGREEMENT PREVIEW — {len(disagreements)} messages")
+    print("(NOT human-override detection; no persisted automation state yet.)")
+    print(f"{'=' * 80}")
+    for o in disagreements:
+        print(
+            f"  [{o['observed_flag']} -> {o['policy_proposes']}] "
+            f"{o['sender'][:35]} {o['subject']}  ({o['reason_code']})"
+        )
+    if not disagreements:
+        print("  No policy disagreements in scope.")
+    print("\nNote: heuristic comparison only. True override detection "
+          "requires persisted last-automation state.")
+    return 0
+
+
+def cmd_flags_explain(args: argparse.Namespace) -> int:
+    """Explain the flag classification for a specific message."""
+    if args.provider != "mailapp":
+        print("flags explain: only supported for mailapp provider", file=sys.stderr)
+        return 1
+    if not _require_flags_mailbox(args, "explain"):
+        return 2
+    account = getattr(args, "account", None)
+    if not isinstance(account, str) or not account.strip():
+        print("flags explain: --account is required", file=sys.stderr)
+        return 2
+
+    message_id = str(args.message_ref)
+    if (
+        not message_id
+        or not message_id.isascii()
+        or not message_id.isdigit()
+        or message_id[0] == "0"
+    ):
+        print(
+            "flags explain: message reference must be a numeric Mail.app id: "
+            f"{message_id!r}",
+            file=sys.stderr,
+        )
+        return 1
+
+    from core.models import MessageReference
+    from providers.mailapp import MailAppProvider
+
+    try:
+        provider = get_provider(
+            args.provider,
+            account=args.account,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"flags explain: provider unavailable: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(provider, MailAppProvider):
+        print("flags explain: mailapp provider required", file=sys.stderr)
+        return 1
+    message_ref = MessageReference(
+        provider="mailapp",
+        account=args.account,
+        mailbox=args.mailbox,
+        provider_id=message_id,
+    )
+
+    try:
+        with provider:
+            msg = provider.get_message_details_ref(message_ref)
+    except (OSError, RuntimeError) as exc:
+        print(f"flags explain: scoped lookup failed: {exc}", file=sys.stderr)
+        return 1
+    if not msg:
+        print(f"Message not found: {message_ref}", file=sys.stderr)
+        return 1
+
+    flag_color = getattr(msg, 'flag_color', FlagColor.NO_FLAG)
+    is_starred = msg.is_starred
+
+    print(f"\n{'=' * 60}")
+    print("MESSAGE EXPLANATION")
+    print(f"{'=' * 60}")
+    print(f"ID:          {msg.id}")
+    print(f"Sender:      {msg.sender}")
+    print(f"Subject:     {msg.subject}")
+    print(f"Date:        {msg.date}")
+    print(f"Read:        {msg.is_read}")
+    print(f"Starred:     {is_starred} (boolean)")
+    print(f"Flag Color:  {flag_color.name_str} ({flag_color.operator_posture})")
+
+    from core import flag_policy
+    proposal = flag_policy.propose(msg.sender, msg.subject, flag_color)
+    if not proposal.is_identity:
+        review_note = (
+            " [review-only]" if proposal.review_required else ""
+        )
+        print(
+            f"Policy proposes: {proposal.proposed_flag.name_str} "
+            f"({proposal.proposed_flag.operator_posture}) "
+            f"[{proposal.reason_code}]{review_note}"
+        )
+    else:
+        print(f"Policy agrees: {proposal.proposed_flag.name_str}")
+
+    combined = f"{msg.sender} {msg.subject}".lower()
+    signals = []
+    for rule_name, rule in LABEL_RULES.items():
+        for pattern in rule["patterns"]:
+            import re
+            if re.search(pattern, combined, re.IGNORECASE):
+                signals.append(f"  Rule match: {rule_name} (tier {rule.get('tier', 4)})")
+                break
+    if signals:
+        print("\nClassification signals:")
+        for s in signals[:10]:
+            print(s)
+
+    print(f"{'=' * 60}\n")
+    return 0
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -2144,37 +3280,62 @@ Examples:
         help="Also emit UMA intake packet JSON for machine consumption",
     )
 
-    # Provider options (shared across subcommands)
+    # Provider options (shared across subcommands).  The flags group accepts
+    # these on EITHER side of its nested subcommand.  Its child parser uses
+    # suppressed defaults so an omitted child option cannot overwrite a value
+    # already parsed by the parent (for example, ``flags --provider mailapp
+    # audit``).
+    def add_provider_options(
+        target: argparse.ArgumentParser,
+        *,
+        suppress_defaults: bool = False,
+    ) -> None:
+        optional_default = (
+            argparse.SUPPRESS if suppress_defaults else None
+        )
+        target.add_argument(
+            "--provider", "-p",
+            choices=["gmail", "imap", "mailapp", "outlook"],
+            default=(
+                argparse.SUPPRESS if suppress_defaults else "gmail"
+            ),
+            help="Email provider (default: gmail)",
+        )
+        target.add_argument(
+            "--host",
+            default=optional_default,
+            help="IMAP host (for imap provider)",
+        )
+        target.add_argument(
+            "--user",
+            default=optional_default,
+            help="IMAP username (for imap provider)",
+        )
+        target.add_argument(
+            "--password",
+            default=optional_default,
+            help="IMAP password (for imap provider)",
+        )
+        target.add_argument(
+            "--account",
+            default=optional_default,
+            help="Mail.app account name (for mailapp provider)",
+        )
+        target.add_argument(
+            "--gmail-extensions",
+            action="store_true",
+            default=(argparse.SUPPRESS if suppress_defaults else False),
+            help="Use Gmail IMAP extensions (for imap provider)",
+        )
+
     provider_group = argparse.ArgumentParser(add_help=False)
-    provider_group.add_argument(
-        "--provider", "-p",
-        choices=["gmail", "imap", "mailapp", "outlook"],
-        default="gmail",
-        help="Email provider (default: gmail)",
-    )
-    provider_group.add_argument(
-        "--host",
-        help="IMAP host (for imap provider)",
-    )
-    provider_group.add_argument(
-        "--user",
-        help="IMAP username (for imap provider)",
-    )
-    provider_group.add_argument(
-        "--password",
-        help="IMAP password (for imap provider)",
-    )
-    provider_group.add_argument(
-        "--account",
-        help="Mail.app account name (for mailapp provider)",
-    )
-    provider_group.add_argument(
-        "--gmail-extensions",
-        action="store_true",
-        help="Use Gmail IMAP extensions (for imap provider)",
-    )
+    add_provider_options(provider_group)
+    flags_provider_group = argparse.ArgumentParser(add_help=False)
+    add_provider_options(flags_provider_group, suppress_defaults=True)
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    from core.obligation_cli import add_parser as add_obligation_parser
+    add_obligation_parser(subparsers)
 
     # Label command
     label_parser = subparsers.add_parser(
@@ -2411,6 +3572,311 @@ Examples:
         help="User's name for the draft signature",
     )
     triage_parser.set_defaults(func=cmd_triage)
+
+    # Flags command group — seven-color workflow state for Mail.app
+    flags_parser = subparsers.add_parser(
+        "flags",
+        parents=[provider_group],
+        help="Seven-color flag workflow state operations (Mail.app only)",
+    )
+    flags_parser.set_defaults(provider="mailapp")
+    flags_subparsers = flags_parser.add_subparsers(
+        dest="flags_command",
+        help="Flags subcommands",
+        required=True,
+    )
+
+    # flags doctor
+    from core.flag_verification import cmd_verify
+    for verification_command in ("verify", "reconcile"):
+        verification_parser = flags_subparsers.add_parser(
+            verification_command, help="Read-only transaction observation; never retries writes")
+        verification_parser.add_argument("--plan", required=True)
+        verification_parser.add_argument("--ledger", required=True)
+        verification_parser.add_argument("--output", required=True)
+        verification_parser.set_defaults(func=cmd_verify)
+
+    flags_doctor_parser = flags_subparsers.add_parser(
+        "doctor",
+        parents=[flags_provider_group],
+        help="Diagnose Mail.app colored flag capability and configuration",
+    )
+    flags_doctor_parser.set_defaults(func=cmd_flags_doctor)
+
+    # flags audit
+    flags_audit_parser = flags_subparsers.add_parser(
+        "audit",
+        parents=[flags_provider_group],
+        help="Read-only inventory of flagged messages",
+    )
+    flags_audit_parser.add_argument(
+        "--mailbox", "-m",
+        type=_nonempty_arg,
+        default="INBOX",
+        help="Mailbox to audit (default: INBOX)",
+    )
+    flags_audit_parser.add_argument(
+        "--limit", "-l",
+        type=_positive_int_arg,
+        default=500,
+        help="Maximum messages to scan (default: 500)",
+    )
+    flags_audit_parser.add_argument(
+        "--since-days",
+        type=_positive_int_arg,
+        default=None,
+        help="Bound scan to messages received in last N days",
+    )
+    flags_audit_parser.add_argument(
+        "--flagged-only",
+        action="store_true",
+        help="Only enumerate currently flagged messages",
+    )
+    flags_audit_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Dry run (no mutations, implied for audit)",
+    )
+    flags_audit_parser.add_argument(
+        "--output", "-o",
+        choices=["table", "json", "csv"],
+        default="table",
+        help="Output format (default: table)",
+    )
+    flags_audit_parser.add_argument(
+        "--receipt",
+        help="Path to write PUBLIC-SAFE (redacted) JSON receipt of audit results",
+    )
+    flags_audit_parser.add_argument(
+        "--estate",
+        action="store_true",
+        help="Discover ALL account/mailbox surfaces and scan each "
+             "(read-only). Per-surface limits apply; any failed surface "
+             "breaks estate completeness.",
+    )
+    flags_audit_parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Emit a read-only partial report when the scan is incomplete "
+             "(default: exit 20 on incomplete scans)",
+    )
+    flags_audit_parser.set_defaults(func=cmd_flags_audit)
+
+    # flags plan — ARTIFACT-ONLY since Commit 5: requires a private
+    # snapshot; no provider args, no mailbox/limit/since-days, no rescan.
+    flags_plan_parser = flags_subparsers.add_parser(
+        "plan",
+        help="Generate migration plan from a PRIVATE SNAPSHOT (artifact-only)",
+    )
+    flags_plan_parser.add_argument(
+        "--snapshot",
+        required=True,
+        help="Path to a private snapshot JSON (mode 0600 artifact of "
+             "`flags audit`); REQUIRED — planning never rescans Mail.app",
+    )
+    flags_plan_parser.add_argument(
+        "--output", "-o",
+        help="Path to write immutable plan JSON (required)",
+    )
+    flags_plan_parser.set_defaults(func=cmd_flags_plan)
+
+    # flags queue
+    flags_queue_parser = flags_subparsers.add_parser(
+        "queue",
+        parents=[flags_provider_group],
+        help=(
+            "Show NOW/ACTION/WAITING/SCHEDULED/REVIEW/REFERENCE/LATER "
+            "plus UNKNOWN evidence"
+        ),
+    )
+    flags_queue_parser.add_argument(
+        "--mailbox", "-m",
+        type=_nonempty_arg,
+        default="INBOX",
+        help="Mailbox to scan (default: INBOX)",
+    )
+    flags_queue_parser.add_argument(
+        "--limit", "-l",
+        type=_positive_int_arg,
+        default=200,
+        help="Maximum messages to show (default: 200)",
+    )
+    flags_queue_parser.add_argument(
+        "--output", "-o",
+        choices=["table", "json"],
+        default="table",
+        help="Output format (default: table)",
+    )
+    flags_queue_parser.set_defaults(func=cmd_flags_queue)
+
+    # flags human-canary-approve — artifact-only exact human authority.
+    # It is intentionally unable to inspect or mutate any provider.
+    flags_human_canary_parser = flags_subparsers.add_parser(
+        "human-canary-approve",
+        help="Create an exact private approval for 1..3 human-selected test flags",
+    )
+    flags_human_canary_parser.add_argument(
+        "--plan", required=True,
+        help="Path to the complete private immutable plan JSON",
+    )
+    flags_human_canary_parser.add_argument(
+        "--snapshot", required=True,
+        help="Path to the complete private snapshot matching --plan",
+    )
+    flags_human_canary_parser.add_argument(
+        "--nominate", action="append", required=True,
+        help=(
+            "Exact mutation_id:ref_digest:temporary_flag; repeat 1..3 "
+            "times only (for example ...:blue)"
+        ),
+    )
+    flags_human_canary_parser.add_argument(
+        "--operator", required=True,
+        help="Explicit approving operator identifier",
+    )
+    flags_human_canary_parser.add_argument(
+        "--ttl-seconds", type=_positive_int_arg, default=3600,
+        help="Approval validity window in seconds (default: 3600)",
+    )
+    flags_human_canary_parser.add_argument(
+        "--output", required=True,
+        help="Private output path for the exact approval artifact",
+    )
+    flags_human_canary_parser.add_argument(
+        "--canary", action="store_true",
+        help="Required acknowledgement of the bounded activation path",
+    )
+    flags_human_canary_parser.add_argument(
+        "--human-selected", action="store_true",
+        help="Required acknowledgement of explicit human nomination",
+    )
+    flags_human_canary_parser.set_defaults(func=cmd_flags_human_canary_approve)
+
+    # flags apply
+    flags_apply_parser = flags_subparsers.add_parser(
+        "apply",
+        parents=[flags_provider_group],
+        help="Apply a flag mutation plan from a receipt",
+    )
+    flags_apply_parser.add_argument(
+        "--plan",
+        help="Path to the complete private plan JSON",
+    )
+    flags_apply_parser.add_argument(
+        "--snapshot",
+        help="Path to the complete private source snapshot JSON",
+    )
+    flags_apply_parser.add_argument(
+        "--approval",
+        help="Path to the exact private approval JSON",
+    )
+    flags_apply_parser.add_argument(
+        "--canary",
+        action="store_true",
+        help="Enable only the bounded first-activation canary path",
+    )
+    flags_apply_parser.add_argument(
+        "--human-selected",
+        action="store_true",
+        help="Required only for an exact human-nominated activation approval",
+    )
+    flags_apply_parser.add_argument(
+        "--limit", "-l",
+        type=_first_canary_limit_arg,
+        default=3,
+        help="Maximum approved mutations; hard bounded to 1..3 (default: 3)",
+    )
+    flags_apply_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run full locked preflight and persist rollback material; write no flags",
+    )
+    flags_apply_parser.add_argument(
+        "--receipt-output",
+        help="Optional private output path for the rollback bundle",
+    )
+    flags_apply_parser.add_argument(
+        "--proposal-output",
+        help="Optional output path for the redacted canary proposal",
+    )
+    flags_apply_parser.set_defaults(func=cmd_flags_apply)
+
+    # flags rollback
+    flags_rollback_parser = flags_subparsers.add_parser(
+        "rollback",
+        parents=[flags_provider_group],
+        help="Rollback a previously applied flag mutation plan",
+    )
+    flags_rollback_parser.add_argument(
+        "--receipt",
+        help="Path to the exact private canary rollback bundle JSON",
+    )
+    flags_rollback_parser.add_argument(
+        "--plan",
+        help="Path to the complete private plan JSON",
+    )
+    flags_rollback_parser.add_argument(
+        "--snapshot",
+        help="Path to the complete private source snapshot JSON",
+    )
+    flags_rollback_parser.add_argument(
+        "--approval",
+        help="Path to the exact private approval JSON used for apply",
+    )
+    flags_rollback_parser.add_argument(
+        "--canary",
+        action="store_true",
+        help="Enable only the bounded canary rollback path",
+    )
+    flags_rollback_parser.add_argument(
+        "--human-selected",
+        action="store_true",
+        help="Required only for rollback of a human-nominated activation canary",
+    )
+    flags_rollback_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run whole-canary rollback preflight with zero writes",
+    )
+    flags_rollback_parser.set_defaults(func=cmd_flags_rollback)
+
+    # flags overrides
+    flags_overrides_parser = flags_subparsers.add_parser(
+        "overrides",
+        parents=[flags_provider_group],
+        help="Preview policy disagreements (not human-override detection)",
+    )
+    flags_overrides_parser.add_argument(
+        "--mailbox", "-m",
+        type=_nonempty_arg,
+        default="INBOX",
+        help="Mailbox to scan (default: INBOX)",
+    )
+    flags_overrides_parser.add_argument(
+        "--limit", "-l",
+        type=_positive_int_arg,
+        default=200,
+        help="Maximum messages to scan (default: 200)",
+    )
+    flags_overrides_parser.set_defaults(func=cmd_flags_overrides)
+
+    # flags explain
+    flags_explain_parser = flags_subparsers.add_parser(
+        "explain",
+        parents=[flags_provider_group],
+        help="Explain the flag classification for a specific message",
+    )
+    flags_explain_parser.add_argument(
+        "message_ref",
+        help="Numeric Mail.app message ID within the requested scope",
+    )
+    flags_explain_parser.add_argument(
+        "--mailbox", "-m",
+        type=_nonempty_arg,
+        default="INBOX",
+        help="Mailbox containing the message (default: INBOX)",
+    )
+    flags_explain_parser.set_defaults(func=cmd_flags_explain)
 
     # Operator summary command - local report to canonical dashboard payload.
     ops_parser = subparsers.add_parser(

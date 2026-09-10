@@ -208,3 +208,31 @@ def test_end_to_end_unstars_noise_keeps_critical(monkeypatch):
     assert out["unstarred"] == 0
     assert p.unstarred == []
     assert any(c["source"] == "gmail_starred_review" and len(c["rows"]) == 4 for c in calls)
+
+
+def test_classify_emits_id_reply_to_and_snippet():
+    from core.models import EmailMessage
+    from providers.base import ListMessagesResult
+
+    class FakeIMAP:
+        def list_messages(self, query="ALL", limit=10, mailbox="INBOX"):
+            return ListMessagesResult(messages=[EmailMessage(id="123", sender="s@x.com", subject="sub")])
+
+        def get_message_details(self, msg_id):
+            return EmailMessage(
+                id=msg_id,
+                sender="Recruiter <r@firm.com>",
+                subject="Role at Acme",
+                is_starred=False,
+                snippet="We are looking for a Python lead.",
+                headers={"reply-to": "replies@firm.com"},
+            )
+
+    rows = sweep.classify(FakeIMAP(), "INBOX", 10)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["id"] == "123"
+    assert r["uid"] == "123"
+    assert r["reply_to"] == "replies@firm.com"
+    assert r["snippet"] == "We are looking for a Python lead."
+

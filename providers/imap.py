@@ -224,7 +224,7 @@ class IMAPProvider(EmailProvider):
         res, data = self._connection.uid(
             "fetch",
             message_id,
-            "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])",
+            "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE REPLY-TO LIST-UNSUBSCRIBE LIST-ID PRECEDENCE)])",
         )
         if res != "OK" or not data or data[0] is None:
             return None
@@ -232,6 +232,22 @@ class IMAPProvider(EmailProvider):
         msg = email.message_from_bytes(data[0][1])
         sender = _decode_header_value(msg.get("From", ""))
         subject = _decode_header_value(msg.get("Subject", ""))
+
+        headers_map = {}
+        for h in ("Reply-To", "List-Unsubscribe", "List-Id", "Precedence"):
+            val = msg.get(h)
+            if val:
+                headers_map[h.lower()] = _decode_header_value(val)
+
+        snippet = ""
+        try:
+            res_body, body_data = self._connection.uid("fetch", message_id, "(BODY.PEEK[TEXT]<0.300>)")
+            if res_body == "OK" and body_data and body_data[0] and isinstance(body_data[0], tuple):
+                raw = body_data[0][1]
+                if isinstance(raw, bytes):
+                    snippet = raw.decode("utf-8", errors="replace").strip()[:200]
+        except Exception:
+            pass
 
         # Get flags/labels
         labels = set()
@@ -273,6 +289,8 @@ class IMAPProvider(EmailProvider):
             labels=labels,
             is_starred=is_starred,
             is_read=is_read,
+            snippet=snippet,
+            headers=headers_map,
         )
 
     @staticmethod

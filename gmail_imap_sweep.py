@@ -47,12 +47,29 @@ def classify(provider, mailbox, limit):
         sender, subject = d.sender or "", d.subject or ""
         protected = is_protected_sender(sender)
         cat = categorize_with_tier(sender, subject)
-        rows.append({
-            "uid": m.id, "sender": sender, "subject": subject,
-            "label": cat.label, "tier": cat.tier, "protected": protected,
+        snip = (getattr(d, "snippet", "") or getattr(d, "body", "") or getattr(m, "snippet", "") or "").strip()
+        headers = getattr(d, "headers", None) or getattr(m, "headers", None)
+        reply_to = ""
+        if isinstance(headers, dict):
+            reply_to = (headers.get("reply-to") or headers.get("Reply-To") or "").strip()
+        row = {
+            "id": str(m.id),
+            "uid": m.id,
+            "sender": sender,
+            "subject": subject,
+            "label": cat.label,
+            "tier": cat.tier,
+            "protected": protected,
             "is_starred": d.is_starred,
-            "action": decide(sender, subject, cat.tier, protected),
-        })
+            "action": decide(sender, subject, cat.tier, protected, cat.label),
+        }
+        if snip:
+            row["snippet"] = snip[:200]
+        if reply_to:
+            row["reply_to"] = reply_to
+        if headers:
+            row["headers"] = dict(headers)
+        rows.append(row)
     return rows
 
 
@@ -224,6 +241,8 @@ def main(argv=None):
     ap.add_argument("--receipt", default=None, help="path to write the JSON receipt / undo manifest")
     ap.add_argument("--no-starred", dest="sweep_starred", action="store_false", default=True,
                     help="skip the residual-star sweep of [Gmail]/Starred (default: also sweep it)")
+    ap.add_argument("--classify-only", action="store_true",
+                    help="write audit/inbox_sweep-<account>.json in obligations schema without archiving")
     args = ap.parse_args(argv)
     if not args.user:
         ap.error("no mailbox configured — set IMAP_USER or pass --user <address>")
@@ -238,6 +257,24 @@ def main(argv=None):
               f"ARCHIVE(drop INBOX)={acts['archive']}")
         for r in [x for x in rows if x["action"] == "archive"][:25]:
             print(f"    archive  {r['sender'][:30]:30} | {r['subject'][:46]}")
+
+        if args.classify_only:
+            receipt = args.receipt or os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "audit",
+                f"inbox_sweep-{args.user.replace('@', '_at_')}.json")
+            os.makedirs(os.path.dirname(receipt), exist_ok=True)
+            with open(receipt, "w") as f:
+                json.dump({
+                    "result": {
+                        "account": args.user,
+                        "mailbox": args.mailbox,
+                        "total": len(rows),
+                        "archived": 0,
+                    },
+                    "rows": rows,
+                }, f, indent=2, default=str)
+            print(f"  classify-only receipt → {receipt}")
+            return 0
 
         result = {"user": args.user, "mailbox": args.mailbox, "total": len(rows),
                   "mode": "apply" if args.apply else "dry_run", "rows": rows}

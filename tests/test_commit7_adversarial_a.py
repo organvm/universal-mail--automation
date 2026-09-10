@@ -213,7 +213,7 @@ class TestSnapshotArtifactFuzz:
         snap = fw.build_snapshot(
             provider_name="mailapp", account="secret-acct@corp",
             mailbox="SecretBox", rows=[
-                _row("777", sender="vip@bank.example",
+                _row("row-secret-777", sender="vip@bank.example",
                      subject="Statement July <abc@x>")],
             complete=True, scope_complete=True, status="complete",
             errors=[], inaccessible_count=0, timeout_count=0,
@@ -224,7 +224,7 @@ class TestSnapshotArtifactFuzz:
 
         forbidden_values = [
             "secret-acct@corp", "SecretBox", "vip@bank.example",
-            "Statement July", "<abc@x>", "777", str(tmp_path),
+            "Statement July", "<abc@x>", "row-secret-777", str(tmp_path),
             "/Users/",
         ]
         for needle in forbidden_values:

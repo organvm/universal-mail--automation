@@ -15,7 +15,6 @@ include core/py.typed
 
 # Scheduling + macOS integration assets referenced by INSTALL.md.
 include com.user.mail_automation.plist
-include com.user.gmail_labeler.plist
 include scripts/build_macos_bundle.sh
 
 # Never ship secrets, local state, caches, or generated output.

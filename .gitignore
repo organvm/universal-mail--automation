@@ -7,9 +7,12 @@ client_secret_*.json
 # Use config/protected_senders.example.txt as the template.
 config/protected_senders.local.txt
 
-# Logs
+# Logs and Runtime State
 *.log
 gmail_labeler.log
+*_state.json
+mail_export.tsv
+mail_report.md
 
 # Triage audit receipts (PII: real sender addresses) — never commit.
 # audit/README.md documents the format and is tracked; the receipts are not.

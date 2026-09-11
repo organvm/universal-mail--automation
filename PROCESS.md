@@ -25,8 +25,8 @@ Harmonize the Gmail labeling automation (`gmail_labeler.py`) with the comprehens
 ## 2. Inputs & Outputs
 
 ### Inputs
-*   **Source Code**: `/Users/4jp/Workspace/mail_automation/gmail_labeler.py`
-*   **Reference Data**: `/Users/4jp/Workspace/mail_automation/iCloud Mail Filtering Rules - Complete Guide.md`
+*   **Source Code**: `gmail_labeler.py`
+*   **Reference Data**: `docs/icloud-mail-filtering-rules.md`
 *   **Data Source**: Live Gmail Inbox (via API)
 
 ### Outputs

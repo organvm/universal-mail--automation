@@ -42,6 +42,13 @@ Global policy: /Users/4jp/AGENTS.md applies and cannot be overridden.
 - Emails are transmittal envelopes, not essays: target 30–90 words, max 120 words soft / 150 words hard ceiling.
 - Zero AI-generated fluff or throat-clearing clichés. All depth, data tables, and multi-topic analysis must reside in attachments/artifacts.
 
+## Active Handoff Protocol
+
+If `.conductor/active-handoff.md` exists, **READ IT FIRST** before doing any work.
+It contains constraints, locked files, conventions, and completed work from the originating agent. You MUST honor all constraints listed there.
+
+If the handoff says "CROSS-VERIFICATION REQUIRED", your self-assessment will NOT be trusted. A different agent will verify your output against these constraints.
+
 
 <!-- ORGANVM:AUTO:START -->
 ## Agent Context (auto-generated — do not edit)

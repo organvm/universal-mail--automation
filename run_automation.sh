@@ -16,6 +16,7 @@ if [ ! -x "$PYTHON_BIN" ]; then
 fi
 
 # Load secrets from 1Password
+# Note: VAULT_REPO and VAULT_PAT should be set here for remote state sync
 if [ -f "$HOME/.config/op/mail_automation.env.op.sh" ]; then
   source "$HOME/.config/op/mail_automation.env.op.sh"
 else

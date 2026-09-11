@@ -13,6 +13,8 @@ from collections import defaultdict
 from typing import Any, Dict, Optional
 from datetime import datetime
 
+from .vault_sync import VaultSync
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,16 +24,12 @@ class StateManager:
 
     Saves page tokens, processed counts, and label statistics to a JSON file
     for crash recovery. Each provider can use its own state file.
+    Optionally syncs state to a centralized GitHub Vault if VAULT_REPO is set.
 
     Attributes:
         filename: Path to the state JSON file
         state: Current state dictionary
-
-    Example:
-        state = StateManager("gmail_state.json")
-        token = state.get_token()  # allow-secret
-        # ... process messages ...
-        state.save(next_token, processed_count, label_stats)
+        vault: Optional VaultSync instance for centralized state management
     """
 
     def __init__(self, filename: str):
@@ -39,13 +37,28 @@ class StateManager:
         Initialize the state manager.
 
         Args:
-            filename: Path to the state file (JSON)
+            filename: Path to the local state file (JSON)
         """
         self.filename = filename
+        self.vault = None
+        
+        vault_repo = os.environ.get("VAULT_REPO")
+        vault_pat = os.environ.get("VAULT_PAT")
+        if vault_repo and vault_pat:
+            vault_path = os.environ.get("VAULT_PATH", f"universal-mail/{os.path.basename(filename)}")
+            self.vault = VaultSync(repo=vault_repo, pat=vault_pat, path=vault_path)
+            
         self.state = self._load()
 
     def _load(self) -> Dict[str, Any]:
-        """Load state from file, or return default state if not found."""
+        """Load state from vault (if configured), then local file, or return default."""
+        if self.vault:
+            logger.info("Attempting to load state from remote Vault...")
+            remote_state = self.vault.pull()
+            if remote_state:
+                logger.info("Successfully loaded state from remote Vault.")
+                return remote_state
+
         if os.path.exists(self.filename):
             try:
                 with open(self.filename, "r") as f:
@@ -54,6 +67,7 @@ class StateManager:
                 logger.error(f"Failed to parse state file {self.filename}: {e}")
             except Exception as e:
                 logger.error(f"Failed to load state file {self.filename}: {e}")
+                
         return self._default_state()
 
     def _default_state(self) -> Dict[str, Any]:
@@ -100,6 +114,14 @@ class StateManager:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_path, self.filename)
+            
+            # Push to vault if configured
+            if self.vault:
+                self.vault.push(
+                    data=self.state,
+                    commit_message=f"Sync state (processed: {processed_count})"
+                )
+                
         except Exception as e:
             logger.error(f"Failed to save state to {self.filename}: {e}")
             if tmp_path is not None and os.path.exists(tmp_path):

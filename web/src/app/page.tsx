@@ -21,7 +21,9 @@ export default async function Dashboard() {
           : {},
     };
   } catch (err: unknown) {
-    error = err instanceof Error ? err.message : 'Unable to load state.';
+    if ((err as { code?: string })?.code !== 'ENOENT') {
+      error = err instanceof Error ? err.message : 'Unable to load state.';
+    }
   }
 
   // Pre-calculated mapping based on python core/rules.py
